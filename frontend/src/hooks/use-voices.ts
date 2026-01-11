@@ -1,0 +1,113 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { apiClient, endpoints } from '@/lib/api'
+import { Voice } from '@/types'
+import { useClientId } from '@/lib/clerk-auth-client'
+
+export function useVoices() {
+  const clientId = useClientId()
+  
+  return useQuery({
+    queryKey: ['voices', clientId],
+    queryFn: async () => {
+      const response = await apiClient.get<Voice[]>(endpoints.voices.list)
+      return response.data
+    },
+    enabled: !!clientId, // Only fetch when clientId is available
+    staleTime: 1000 * 60, // Consider data fresh for 60 seconds (longer to prevent flickering)
+    gcTime: 1000 * 60 * 10, // Keep in cache for 10 minutes
+    refetchOnWindowFocus: false, // Don't refetch on window focus for better performance
+    refetchOnMount: false, // Don't refetch if data is fresh (prevents flickering)
+    refetchOnReconnect: true, // Refetch on reconnect
+    // Don't use placeholderData - it causes flickering
+    // Instead, we'll handle loading state in the component using cached data
+    retry: 1, // Only retry once on failure
+  })
+}
+
+export function useVoice(id: string) {
+  const clientId = useClientId()
+  
+  return useQuery({
+    queryKey: ['voices', clientId, id],
+    queryFn: async () => {
+      const response = await apiClient.get<Voice>(endpoints.voices.get(id))
+      return response.data
+    },
+    enabled: !!id && !!clientId,
+  })
+}
+
+export function useCreateVoice() {
+  const queryClient = useQueryClient()
+  const clientId = useClientId()
+
+  return useMutation({
+    mutationFn: async (data: {
+      name: string
+      strategy: 'external' | 'native' | 'auto'
+      source: {
+        type: 'external' | 'native'
+        provider_voice_id?: string
+        samples?: Array<{
+          text: string
+          s3_key: string
+          duration_seconds: number
+        }>
+      }
+      provider_overrides?: {
+        provider?: string
+      }
+    }) => {
+      const response = await apiClient.post<Voice>(endpoints.voices.create, data)
+      return response.data
+    },
+    onSuccess: (newVoice) => {
+      // Optimistically update the cache for instant UI feedback
+      queryClient.setQueryData<Voice[]>(['voices', clientId], (oldVoices = []) => {
+        // Check if voice already exists (prevent duplicates)
+        const exists = oldVoices.some(voice => voice.id === newVoice.id)
+        if (exists) {
+          return oldVoices.map(voice => voice.id === newVoice.id ? newVoice : voice)
+        }
+        return [newVoice, ...oldVoices]
+      })
+      // Refetch to ensure we have the latest data
+      queryClient.refetchQueries({ queryKey: ['voices', clientId] })
+    },
+  })
+}
+
+export function useDeleteVoice() {
+  const queryClient = useQueryClient()
+  const clientId = useClientId()
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(endpoints.voices.delete(id))
+    },
+    onSuccess: (_, deletedId) => {
+      // Optimistically remove from cache for instant UI feedback
+      queryClient.setQueryData<Voice[]>(['voices', clientId], (oldVoices = []) => {
+        return oldVoices.filter(voice => voice.id !== deletedId)
+      })
+      // Refetch to ensure consistency
+      queryClient.refetchQueries({ queryKey: ['voices', clientId] })
+    },
+  })
+}
+
+export function useSyncVoiceWithUltravox() {
+  const queryClient = useQueryClient()
+  const clientId = useClientId()
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const response = await apiClient.post<Voice>(endpoints.voices.sync(id), {})
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['voices', clientId] })
+    },
+  })
+}
+

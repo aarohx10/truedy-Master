@@ -1,0 +1,53 @@
+# Dependency directories
+node_modules/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDE and editor files
+.cursor/
+.taskmaster/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation files
+*.md
+!README.md
+
+# Ultravox folders
+ultravox ai agents sections screenshots/
+ultravox_screenshots_text/
+
+# Other project docs
+other project docs/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# Temporary files
+*.tmp
+*.temp
+git push
