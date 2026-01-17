@@ -138,7 +138,7 @@ async def create_call(
         )
         call_record["status"] = "failed"
     
-    # Emit EventBridge event (only if call was successfully created in Ultravox)
+    # Emit event (only if call was successfully created in Ultravox)
     if call_record.get("ultravox_call_id"):
         await emit_call_created(
             call_id=call_id,
@@ -362,7 +362,7 @@ async def get_call_recording(
             elif "ogg" in content_type.lower():
                 file_ext = "ogg"
             
-            # Generate S3 key: recordings/client_id/calls/call_id/recording.{ext}
+            # Generate storage key: recordings/client_id/calls/call_id/recording.{ext}
             client_id = current_user["client_id"]
             s3_key = f"recordings/{client_id}/calls/{call_id}/recording.{file_ext}"
             
@@ -375,9 +375,9 @@ async def get_call_recording(
                 content_type=content_type,
             )
             
-            # Update database with S3 URL
+            # Update database with storage URL
             db.update("calls", {"id": call_id}, {"recording_url": s3_url})
-            logger.info(f"Call recording uploaded to S3 and database updated: {s3_url}")
+            logger.info(f"Call recording uploaded to storage and database updated: {s3_url}")
             
             recording_url = s3_url
         except httpx.HTTPError as e:

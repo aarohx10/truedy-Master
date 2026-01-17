@@ -1,5 +1,5 @@
 """
-Internal API Routes for Step Functions
+Internal API Routes for Background Jobs
 """
 from fastapi import APIRouter, Header, HTTPException, Depends
 from fastapi.responses import JSONResponse
@@ -97,7 +97,7 @@ async def update_voice_status(
     status_data: dict,
     _: bool = Depends(verify_internal_request),
 ):
-    """Update voice status (called by Step Functions)"""
+    """Update voice status (called by background jobs or webhooks)"""
     db = DatabaseAdminService()
     
     # Check if voice exists
@@ -138,7 +138,7 @@ async def update_campaign_stats(
     campaign_id: str,
     _: bool = Depends(verify_internal_request),
 ):
-    """Update campaign statistics (called by Step Functions)"""
+    """Update campaign statistics (called by background jobs)"""
     db = DatabaseAdminService()
     
     # Check if campaign exists
@@ -176,7 +176,7 @@ async def update_agent_status(
     status_data: dict,
     _: bool = Depends(verify_internal_request),
 ):
-    """Update agent status (called by Step Functions)"""
+    """Update agent status (called by background jobs or webhooks)"""
     db = DatabaseAdminService()
     
     # Check if agent exists
@@ -215,7 +215,7 @@ async def update_call_status(
     status_data: dict,
     _: bool = Depends(verify_internal_request),
 ):
-    """Update call status (called by Step Functions)"""
+    """Update call status (called by background jobs or webhooks)"""
     db = DatabaseAdminService()
     
     # Check if call exists
@@ -272,7 +272,7 @@ async def update_campaign_status(
     status_data: dict,
     _: bool = Depends(verify_internal_request),
 ):
-    """Update campaign status (called by Step Functions)"""
+    """Update campaign status (called by background jobs or webhooks)"""
     db = DatabaseAdminService()
     
     # Check if campaign exists
@@ -310,7 +310,7 @@ async def deliver_webhook_internal(
     delivery_data: dict,
     _: bool = Depends(verify_internal_request),
 ):
-    """Deliver webhook (called by Lambda function)"""
+    """Deliver webhook (called by background jobs or webhooks)"""
     from app.core.webhooks import deliver_webhook
     
     webhook_endpoint_id = delivery_data.get("webhook_endpoint_id")

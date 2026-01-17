@@ -1,6 +1,6 @@
 """
 File Serving Endpoint (Hetzner VPS)
-Serves files with signature verification (replaces S3 direct access)
+Serves files with signature verification (replaces direct storage access)
 """
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import FileResponse
@@ -28,7 +28,7 @@ async def serve_file(
     """
     Serve file with signature verification
     
-    This endpoint replaces direct S3 access. Files are served from local storage
+    This endpoint replaces direct storage access. Files are served from local storage
     after verifying the HMAC signature.
     """
     try:

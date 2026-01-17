@@ -25,6 +25,9 @@ __pycache__/
 # Documentation files
 *.md
 !README.md
+# Allow Context folder and all its contents (including markdown files)
+!Context/
+!Context/**/*.md
 
 # Ultravox folders
 ultravox ai agents sections screenshots/

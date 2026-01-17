@@ -99,9 +99,40 @@ async def get_me(
                     "credits_ceiling": 10000,
                 }
                 debug_logger.log_db("INSERT", "clients", {"client_id": client_id, "org_id": clerk_org_id})
-                admin_db.table("clients").insert(client_data).execute()
-                logger.info(f"Created new client linked to Clerk org: {client_id}, org: {clerk_org_id}")
-                debug_logger.log_step("AUTH_ME", "Created new client for Clerk org", {"client_id": client_id})
+                try:
+                    admin_db.table("clients").insert(client_data).execute()
+                    logger.info(f"Created new client linked to Clerk org: {client_id}, org: {clerk_org_id}")
+                    debug_logger.log_step("AUTH_ME", "Created new client for Clerk org", {"client_id": client_id})
+                except Exception as e:
+                    # If it's a duplicate key error (23505), fetch the existing client instead
+                    error_str = str(e)
+                    error_code = None
+                    if hasattr(e, 'code'):
+                        error_code = e.code
+                    elif hasattr(e, 'message') and isinstance(e.message, dict):
+                        error_code = e.message.get('code')
+                    
+                    if "23505" in error_str or error_code == '23505':
+                        logger.info(f"Client already exists for email {client_data['email']}, fetching existing record.")
+                        try:
+                            existing_client = admin_db.table("clients").select("id").eq("email", client_data["email"]).single().execute()
+                            if existing_client.data:
+                                client_id = existing_client.data["id"]
+                                logger.info(f"Using existing client: {client_id} for email: {client_data['email']}")
+                                debug_logger.log_step("AUTH_ME", "Using existing client (duplicate email)", {"client_id": client_id, "email": client_data["email"]})
+                            else:
+                                # Fallback: try to find by org_id
+                                org_client = admin_db.table("clients").select("id").eq("clerk_organization_id", clerk_org_id).single().execute()
+                                if org_client.data:
+                                    client_id = org_client.data["id"]
+                                    logger.info(f"Using existing client by org_id: {client_id}")
+                                else:
+                                    raise e
+                        except Exception as fetch_error:
+                            logger.error(f"Error fetching existing client: {fetch_error}")
+                            raise e
+                    else:
+                        raise e
                 
                 # Sync client_id to organization metadata
                 if clerk_org_id:
@@ -124,9 +155,34 @@ async def get_me(
                 "credits_ceiling": 10000,
             }
             debug_logger.log_db("INSERT", "clients", {"client_id": client_id})
-            admin_db.table("clients").insert(client_data).execute()
-            logger.info(f"Created new client: {client_id}")
-            debug_logger.log_step("AUTH_ME", "Created new standalone client", {"client_id": client_id})
+            try:
+                admin_db.table("clients").insert(client_data).execute()
+                logger.info(f"Created new client: {client_id}")
+                debug_logger.log_step("AUTH_ME", "Created new standalone client", {"client_id": client_id})
+            except Exception as e:
+                # If it's a duplicate key error (23505), fetch the existing client instead
+                error_str = str(e)
+                error_code = None
+                if hasattr(e, 'code'):
+                    error_code = e.code
+                elif hasattr(e, 'message') and isinstance(e.message, dict):
+                    error_code = e.message.get('code')
+                
+                if "23505" in error_str or error_code == '23505':
+                    logger.info(f"Client already exists for email {client_data['email']}, fetching existing record.")
+                    try:
+                        existing_client = admin_db.table("clients").select("id").eq("email", client_data["email"]).single().execute()
+                        if existing_client.data:
+                            client_id = existing_client.data["id"]
+                            logger.info(f"Using existing client: {client_id} for email: {client_data['email']}")
+                            debug_logger.log_step("AUTH_ME", "Using existing client (duplicate email)", {"client_id": client_id, "email": client_data["email"]})
+                        else:
+                            raise e
+                    except Exception as fetch_error:
+                        logger.error(f"Error fetching existing client: {fetch_error}")
+                        raise e
+                else:
+                    raise e
         
         # Create user linked to client (Clerk ONLY)
         user_id_uuid = str(uuid.uuid4())
@@ -197,6 +253,37 @@ async def get_clients(
     
     return {
         "data": [ClientResponse(**client) for client in clients],
+        "meta": ResponseMeta(
+            request_id=str(uuid.uuid4()),
+            ts=datetime.utcnow(),
+        ),
+    }
+
+
+@router.get("/users")
+async def get_users(
+    current_user: dict = Depends(get_current_user),
+    x_client_id: Optional[str] = Header(None),
+):
+    """Get users for the current client (team members)"""
+    debug_logger.log_request("GET", "/auth/users", {
+        "user_id": current_user.get("user_id"),
+        "client_id": current_user.get("client_id"),
+    })
+    
+    db = DatabaseService(current_user["token"])
+    db.set_auth(current_user["token"])
+    
+    # Get users for the current client (RLS will filter by client_id automatically)
+    users = db.select("users", {"client_id": current_user["client_id"]})
+    
+    debug_logger.log_response("GET", "/auth/users", 200, context={
+        "user_count": len(users),
+        "client_id": current_user.get("client_id"),
+    })
+    
+    return {
+        "data": [UserResponse(**user) for user in users],
         "meta": ResponseMeta(
             request_id=str(uuid.uuid4()),
             ts=datetime.utcnow(),

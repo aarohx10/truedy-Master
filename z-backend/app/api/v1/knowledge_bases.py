@@ -101,7 +101,7 @@ async def create_knowledge_base(
         )
         raise
     
-    # Emit EventBridge event
+    # Emit event
     await emit_knowledge_base_created(
         kb_id=kb_id,
         client_id=current_user["client_id"],
@@ -217,12 +217,12 @@ async def ingest_kb_files(
         if not doc:
             continue
         
-        # Check S3 file exists
+        # Check storage file exists
         if not check_object_exists(settings.S3_BUCKET_UPLOADS, doc["s3_key"]):
             db.update(
                 "knowledge_base_documents",
                 {"id": doc_id},
-                {"status": "failed", "error_message": "File not found in S3"},
+                {"status": "failed", "error_message": "File not found in storage"},
             )
             continue
         

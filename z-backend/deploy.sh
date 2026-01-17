@@ -35,11 +35,29 @@ else
     echo -e "${YELLOW}Migration script not found, skipping...${NC}"
 fi
 
+# Check and create storage directory
+echo -e "${GREEN}Checking storage directory...${NC}"
+STORAGE_PATH="${FILE_STORAGE_PATH:-/mnt/storage}"
+if [ ! -d "$STORAGE_PATH" ]; then
+    echo -e "${YELLOW}Storage directory not found. Creating $STORAGE_PATH...${NC}"
+    sudo mkdir -p "$STORAGE_PATH"
+    sudo chown root:root "$STORAGE_PATH"
+    sudo chmod 755 "$STORAGE_PATH"
+    echo -e "${GREEN}Storage directory created${NC}"
+else
+    echo -e "${GREEN}Storage directory exists: $STORAGE_PATH${NC}"
+    # Verify it's writable
+    if [ ! -w "$STORAGE_PATH" ]; then
+        echo -e "${YELLOW}Storage directory not writable. Fixing permissions...${NC}"
+        sudo chmod 755 "$STORAGE_PATH"
+    fi
+fi
+
 # Check environment variables
 echo -e "${GREEN}Checking environment variables...${NC}"
 if [ ! -f ".env" ]; then
     echo -e "${RED}ERROR: .env file not found!${NC}"
-    echo "Please create .env file from .env.production.example"
+    echo "Please create .env file from env.hetzner.example"
     exit 1
 fi
 
@@ -74,12 +92,14 @@ fi
 
 # Health check
 echo -e "${GREEN}Performing health check...${NC}"
-sleep 3
-if curl -f http://localhost:8000/internal/health > /dev/null 2>&1; then
+sleep 5  # Give service more time to start
+HEALTH_URL="${FILE_SERVER_URL:-http://localhost:8000}/internal/health"
+if curl -f "$HEALTH_URL" > /dev/null 2>&1 || curl -f http://localhost:8000/internal/health > /dev/null 2>&1; then
     echo -e "${GREEN}✅ Health check passed!${NC}"
 else
     echo -e "${RED}❌ Health check failed!${NC}"
     echo "Check logs: journalctl -u trudy-backend -n 50"
+    echo "Service status: systemctl status trudy-backend"
     exit 1
 fi
 

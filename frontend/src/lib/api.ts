@@ -22,22 +22,28 @@ export const queryClient = new QueryClient({
 // HARD-CODED: No environment variables - everything is hard-coded for reliability
 
 // Hard-coded production backend URL
-const PRODUCTION_BACKEND_URL = 'https://adaptable-playfulness-production-b3c6.up.railway.app/api/v1'
+const PRODUCTION_BACKEND_URL = 'https://truedy.closi.tech/api/v1'
 
 // Hard-coded localhost URL for development
 const LOCALHOST_BACKEND_URL = 'http://localhost:8000/api/v1'
 
 export const API_URL = (() => {
-  // In browser, check if we're in production
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname
-    // If not localhost, use hard-coded production backend URL
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1' && !hostname.startsWith('192.168.')) {
+    // Comprehensive check for local development environments
+    const isLocal = 
+      hostname === 'localhost' || 
+      hostname === '127.0.0.1' || 
+      hostname.startsWith('192.168.') || 
+      hostname.startsWith('10.') ||
+      hostname.startsWith('172.')
+
+    if (!isLocal) {
+      // Use the hard-coded production backend URL for all cloud/preview deployments
       return PRODUCTION_BACKEND_URL
     }
   }
-  
-  // Default to localhost for development
+  // Default to local backend for development
   return LOCALHOST_BACKEND_URL
 })()
 
@@ -384,6 +390,7 @@ export const endpoints = {
   auth: {
     me: '/auth/me',
     clients: '/auth/clients',
+    users: '/auth/users',
     apiKeys: '/api-keys',
     providers: {
       tts: '/providers/tts',

@@ -1,19 +1,19 @@
 # Backend Plan
 
-# Trudy Backend Plan (FastAPI + AWS Serverless) — Single-Agency, Multi-Client## Overview- Backend framework: FastAPI (Python 3.11), Pydantic v2, Uvicorn.
+# Trudy Backend Plan (FastAPI + Hetzner VPS) — Single-Agency, Multi-Client## Overview- Backend framework: FastAPI (Python 3.11), Pydantic v2, Uvicorn.
 
-- Hosting: AWS API Gateway (REST) → Lambda (ASGI via Mangum).
-- Async workflows: Step Functions; queues: SQS; schedules: EventBridge.
-- Storage: S3 (uploads/artifacts) + optional CloudFront.
+- Hosting: Hetzner VPS with systemd service management.
+- Async workflows: Background jobs via systemd timers or cron.
+- Storage: Local file storage on mounted volume (uploads/artifacts).
 - Database: Supabase Postgres with RLS (single-agency, client-scoped).
-- Secrets: AWS Secrets Manager. Observability: CloudWatch + Sentry.
+- Secrets: Environment variables (.env file). Observability: journald + Sentry.
 - Auth: Auth0 JWT (RS256). Ultravox is the primary voice/calls provider.
 
 ## Services (logical modules)- Identity & Access: clients (tenants), users/roles, API keys.
 
 - Voices: native cloning via Ultravox; external refs; status polling.
 - Agents: CRUD, voice linkage, tools/corpora mapping.
-- Knowledge Base: S3 intake + Ultravox corpus/source sync.
+- Knowledge Base: Local storage intake + Ultravox corpus/source sync.
 - Calls: direct calls; transcripts/recordings/analysis proxy.
 - Campaigns: CSV ingest, batching, scheduled dialing (Ultravox + Telnyx medium).
 - Billing & Credits: Stripe webhooks → credit ledger; feature gating.
@@ -33,25 +33,25 @@
 
 - Errors: { "error": { "code": "...", "message": "...", "details": { ... } } }
 
-## Architecture- Entry: API Gateway (JWT authorizer) → Lambda FastAPI (Mangum).
+## Architecture- Entry: Hetzner VPS → FastAPI (Uvicorn with multiple workers).
 
-- S3 presigns for uploads/downloads; hash/size validation on callback.
-- Step Functions: voice-clone-native, voice-clone-external, campaign-execute-batch, artifacts-backfill.
-- SQS queues (+ DLQs): q-campaign-dialer, q-artifacts-sync, q-webhook-egress.
-- EventBridge rules: nightly-analytics, stale-upload-cleaner, retry-voice-status.
+- Local storage with presigned URLs for uploads/downloads; hash/size validation on callback.
+- Background jobs: voice-clone-native, voice-clone-external, campaign-execute-batch, artifacts-backfill.
+- Background job queues: campaign-dialer, artifacts-sync, webhook-egress (implemented via database or in-memory queues).
+- Scheduled jobs: nightly-analytics, stale-upload-cleaner, retry-voice-status (via systemd timers or cron).
 
 ## Environments & config- Stages: dev, staging, prod. Stage-specific Supabase.
 
-- Env vars (prefix TRUDY_): SUPABASE_URL/KEY, JWT_AUDIENCE/ISSUER, ULTRAVOX_API_KEY, STRIPE_SECRET, TELNYX_API_KEY, S3 buckets, WEBHOOK_SIGNING_SECRET.
-- Secrets in Secrets Manager; cached at cold start.
+- Env vars (prefix TRUDY_): SUPABASE_URL/KEY, JWT_AUDIENCE/ISSUER, ULTRAVOX_API_KEY, STRIPE_SECRET, TELNYX_API_KEY, FILE_STORAGE_PATH, FILE_SERVER_URL, WEBHOOK_SIGNING_SECRET.
+- Secrets in .env file; loaded at service start.
 
 ## Security- Auth0 JWKs verification (cached). Tenancy via `x-client-id` header alignment with JWT claim (validated) and RLS.
 
 - Webhook HMAC (egress): X-Trudy-Timestamp + X-Trudy-Signature.
 - Provider webhook verification (Ultravox/Stripe/Telnyx). Reject skew > 5m.
-- S3 encryption + lifecycle; least-privilege IAM; audit log on sensitive tables.
+- File storage encryption + lifecycle policies; file permissions; audit log on sensitive tables.
 
-## Rate limits & quotas- API Gateway usage plans for public API keys.
+## Rate limits & quotas- FastAPI rate limiting middleware for public API keys.
 
 - Per-client quotas in DB (calls/day, campaigns, storage GB).
 - Optional Redis (Upstash) for burst control.
@@ -74,9 +74,9 @@
 - Webhooks signed, retried, DLQs empty in steady state.
 - OpenAPI validates; tenancy tests enforce client-level RLS.
 
-## Deployment- IaC: AWS SAM or Serverless Framework; per-stage params.
+## Deployment- Infrastructure: Hetzner VPS with systemd service management.
 
-- CI/CD: GitHub Actions (ruff, mypy, pytest, package lambdas, deploy). Canary or staged rollouts.
+- CI/CD: GitHub Actions (ruff, mypy, pytest, deploy via SSH). Automatic deployment on push to main branch.
 
 ## Feature-by-feature backend design (contracts, logic, database)Notes
 
@@ -84,7 +84,7 @@
 - All writes are idempotent using an `X-Idempotency-Key` header (persisted per client with request hash + outcome).
 - All requests must include `x-client-id`; backend validates it against JWT and uses it for Supabase filters.
 - All database queries automatically filtered by RLS using JWT context (set via `supabase.postgrest.auth.set_auth(jwt_token)`).
-- Event emissions: Publish to EventBridge for async processing and real-time frontend updates via WebSocket.
+- Event emissions: Emit events for async processing and real-time frontend updates via WebSocket.
 
 ### 0) Auth & Client Management
 
@@ -123,7 +123,7 @@
 1. Validate JWT, client_id, permissions (must be `client_admin` or `agency_admin`)
 2. Check idempotency key (if present)
 3. Validate request body: `service` (required), `key_name` (required), `api_key` (required)
-4. Encrypt `api_key` using AWS KMS or client-side encryption
+4. Encrypt `api_key` using client-side encryption (Fernet or similar)
 5. Insert into `api_keys` table:
 - `client_id` (from JWT, validated)
 - `service`: “ultravox” | “stripe” | “telnyx” | “google_cloud” | “aws” | “azure” | “openai” | “elevenlabs”
@@ -161,7 +161,7 @@
 - `api_key`: string (required)
 - `voice_id`: string (optional, provider-specific)
 - `settings`: JSON object (provider-specific: project_id, region, etc.)
-3. Encrypt `api_key` using AWS KMS
+3. Encrypt `api_key` using client-side encryption (Fernet or similar)
 4. Check if API key exists for this client+service:
 - If exists: UPDATE `api_keys` table (encrypted_key, settings, is_active=true, updated_at)
 - If not: INSERT into `api_keys` table

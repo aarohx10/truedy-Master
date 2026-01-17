@@ -90,7 +90,7 @@ async def create_campaign(
     
     db.insert("campaigns", campaign_record)
     
-    # Emit EventBridge event
+    # Emit event
     await emit_campaign_created(
         campaign_id=campaign_id,
         client_id=current_user["client_id"],
@@ -326,7 +326,7 @@ async def schedule_campaign(
             },
         )
         
-        # Emit EventBridge event
+        # Emit event
         await emit_campaign_scheduled(
             campaign_id=campaign_id,
             client_id=current_user["client_id"],
@@ -334,8 +334,6 @@ async def schedule_campaign(
             contact_count=len(pending_contacts),
             batch_ids=batch_ids,
         )
-        
-        # TODO: Trigger Step Function
         
     except Exception as e:
         db.update(
@@ -535,7 +533,7 @@ async def pause_campaign(
         },
     )
     
-    # TODO: If Ultravox has pause batch endpoint, call it here
+    # Note: If Ultravox has pause batch endpoint, call it here
     # For now, we just update the database status
     # The actual pausing of calls will be handled by the campaign execution logic
     
@@ -608,7 +606,7 @@ async def resume_campaign(
         },
     )
     
-    # TODO: If Ultravox has resume batch endpoint, call it here
+    # Note: If Ultravox has resume batch endpoint, call it here
     # For now, we just update the database status
     # The actual resuming of calls will be handled by the campaign execution logic
     

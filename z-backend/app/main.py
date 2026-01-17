@@ -83,16 +83,30 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware - ALLOW ALL ORIGINS (DEV/TESTING ONLY)
-# WARNING: This allows all origins without restriction. For production, use proper origin filtering.
-logger.warning("⚠️  CORS: ALLOWING ALL ORIGINS - DEV/TESTING MODE ONLY")
+# CORS Configuration (Specific origins + Regex for wildcards)
+# Convert wildcard patterns to regex patterns for FastAPI CORS
+cors_regex_patterns = []
+for pattern in settings.CORS_WILDCARD_PATTERNS:
+    # Patterns are already in regex format, but ensure they're anchored
+    if not pattern.startswith("^"):
+        pattern = f"^{pattern}"
+    if not pattern.endswith("$"):
+        pattern = f"{pattern}$"
+    cors_regex_patterns.append(pattern)
 
 cors_middleware_config = {
-    "allow_origin_regex": ".*",  # Regex pattern matching all origins (works with credentials)
+    "allow_origins": settings.CORS_ORIGINS,
     "allow_credentials": True,
-    "allow_methods": ["*"],  # Allow all methods
-    "allow_headers": ["*"],  # Allow all headers
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
 }
+
+# Add regex pattern if we have wildcard patterns
+if cors_regex_patterns:
+    cors_middleware_config["allow_origin_regex"] = "|".join(cors_regex_patterns)
+    logger.info(f"✅ CORS regex patterns configured: {cors_middleware_config['allow_origin_regex']}")
+
+logger.info(f"✅ CORS Exact Origins: {settings.CORS_ORIGINS}")
 
 # Create custom CORS middleware wrapper for detailed logging
 class LoggingCORSMiddleware(StarletteCORSMiddleware):
@@ -103,10 +117,20 @@ class LoggingCORSMiddleware(StarletteCORSMiddleware):
             await self.app(scope, receive, send)
             return
         
-        # CORS is set to allow all origins - no origin checking needed
-        # Just pass through to parent middleware
+        # Read origin from headers for logging
+        origin_requested = None
+        try:
+            headers_list = scope.get("headers", [])
+            for header in headers_list:
+                if isinstance(header, (list, tuple)) and len(header) == 2:
+                    key = header[0].lower()
+                    if key == b"origin":
+                        origin_requested = header[1].decode("utf-8") if isinstance(header[1], bytes) else header[1]
+                        break
+        except Exception:
+            pass
         
-        # Wrap send to capture response headers
+        # Wrap send to capture response headers for debugging
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
                 # DEBUG: Log response headers (via logger - safe)
@@ -121,7 +145,7 @@ class LoggingCORSMiddleware(StarletteCORSMiddleware):
                             headers_dict[key.lower()] = val
                     
                     cors_header = headers_dict.get("access-control-allow-origin", "MISSING")
-                    logger.info(f"🔍 [CORS] Response headers | status={message.get('status')} | has_cors_origin={'access-control-allow-origin' in headers_dict} | cors_origin_value={cors_header} | origin_requested={origin_val}")
+                    logger.info(f"🔍 [CORS] Response headers | status={message.get('status')} | has_cors_origin={'access-control-allow-origin' in headers_dict} | cors_origin_value={cors_header} | origin_requested={origin_requested}")
                 except Exception as e:
                     logger.warning(f"🔍 [CORS] Error logging response headers (non-fatal): {e}")
             await send(message)
@@ -131,19 +155,15 @@ class LoggingCORSMiddleware(StarletteCORSMiddleware):
 
 # Middleware order matters! In FastAPI, middleware is applied in REVERSE order of addition.
 # So we add them in reverse order: last added = first executed
-# Execution order: RateLimit -> Logging -> RequestID -> CORS (last to add headers)
+# CORS must be the outer layer to ensure headers are sent even during errors
+# Execution order: RateLimit -> Logging -> RequestID -> CORS (outermost for response headers)
 
-# Rate Limiting Middleware (executes first)
-app.add_middleware(RateLimitMiddleware)
-
-# Logging Middleware (executes second)
-app.add_middleware(LoggingMiddleware)
-
-# Request ID Middleware (executes third - must be before CORS to set request_id)
-app.add_middleware(RequestIDMiddleware)
-
-# CORS Middleware (executes last - must be last to add CORS headers to response)
+# Add Middleware in correct execution order
+# CORS is added first (last in execution) to wrap all responses
 app.add_middleware(LoggingCORSMiddleware, **cors_middleware_config)
+app.add_middleware(RequestIDMiddleware)
+app.add_middleware(LoggingMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
 
 # Exception Handlers
@@ -165,11 +185,15 @@ async def trudy_exception_handler(request, exc: TrudyException):
 
 
 @app.exception_handler(Exception)
-async def general_exception_handler(request, exc: Exception):
-    """Handle general exceptions"""
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle general exceptions and ensure CORS headers are present"""
     logger.exception(f"Unhandled exception: {exc}")
     request_id = getattr(request.state, "request_id", None)
-    return JSONResponse(
+    
+    # Extract origin from request to mirror it back for CORS compliance
+    origin = request.headers.get("origin")
+    
+    response = JSONResponse(
         status_code=500,
         content={
             "error": {
@@ -180,6 +204,15 @@ async def general_exception_handler(request, exc: Exception):
             }
         },
     )
+    
+    # Manually add CORS headers if the exception occurred before/outside the middleware
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+    return response
 
 
 # Health Check

@@ -93,7 +93,7 @@ async def ultravox_webhook(
                 },
             )
             
-            # Emit EventBridge event
+            # Emit event
             await emit_call_started(call_id=call["id"], client_id=client_id_for_webhook)
     
     elif event_type == "call.completed":
@@ -141,7 +141,7 @@ async def ultravox_webhook(
                 },
             )
             
-            # Emit EventBridge event
+            # Emit event
             await emit_call_completed(
                 call_id=call["id"],
                 client_id=call["client_id"],
@@ -178,7 +178,7 @@ async def ultravox_webhook(
                 },
             )
             
-            # Emit EventBridge event
+            # Emit event
             await emit_call_failed(call_id=call["id"], client_id=client_id_for_webhook, error_message=error_message)
             
             # Update campaign contact if applicable
@@ -211,7 +211,7 @@ async def ultravox_webhook(
                 },
             )
             
-            # Emit EventBridge event
+            # Emit event
             await emit_voice_training_completed(
                 voice_id=voice["id"],
                 client_id=client_id_for_webhook,
@@ -237,7 +237,7 @@ async def ultravox_webhook(
                 },
             )
             
-            # Emit EventBridge event
+            # Emit event
             await emit_voice_training_failed(
                 voice_id=voice["id"],
                 client_id=client_id_for_webhook,
@@ -298,8 +298,8 @@ async def trigger_egress_webhooks(
             },
         )
         
-        # Queue webhook delivery (SQS or direct)
-        # For now, we'll deliver directly. In production, use SQS
+        # Queue webhook delivery
+        # For now, we'll deliver directly. In production, use a queue system
         try:
             success, status_code, error = await deliver_webhook(
                 url=endpoint["url"],
@@ -408,7 +408,7 @@ async def stripe_webhook(
                     {"credits_balance": client.get("credits_balance", 0) + credits},
                 )
                 
-                # Emit EventBridge event
+                # Emit event
                 await emit_credits_purchased(
                     client_id=client_id,
                     amount=amount_usd,

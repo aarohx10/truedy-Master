@@ -28,28 +28,32 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Trudy API"
     
     def __init__(self, **kwargs):
-        """Initialize settings and parse CORS origins - HARD-CODED (ignores env vars)"""
+        """Initialize settings and parse CORS origins - Dynamic with production support"""
         # Remove CORS_ORIGINS from kwargs to prevent Pydantic from trying to parse it as JSON
         kwargs.pop("CORS_ORIGINS", None)
         super().__init__(**kwargs)
         
-        # HARD-CODED: Always use hard-coded CORS origins (ignore environment variables)
-        # Production frontend URL is hard-coded to ensure it's always allowed
-        PRODUCTION_FRONTEND_URL = "https://truedy.sendora.ai"
-        
-        # Hard-coded CORS origins (no environment variable override)
-        object.__setattr__(self, "CORS_ORIGINS", [
+        # Define base allowed origins
+        origins = [
             "http://localhost:3000",
             "http://localhost:3001",
             "http://127.0.0.1:3000",
             "http://127.0.0.1:3001",
             "https://trudy.ai",
-            PRODUCTION_FRONTEND_URL,  # Production frontend URL (hard-coded)
-        ])
-        # Hard-coded wildcard patterns
+            "https://truedy.sendora.ai",  # Production Frontend
+        ]
+        
+        # Also allow the backend's own URL for internal calls if necessary
+        # Add Hetzner domain if configured
+        hetzner_domain = os.getenv("HETZNER_DOMAIN", "")
+        if hetzner_domain:
+            origins.append(hetzner_domain)
+        
+        object.__setattr__(self, "CORS_ORIGINS", origins)
         object.__setattr__(self, "CORS_WILDCARD_PATTERNS", [
-            "https://*.vercel.app",  # Vercel preview deployments
-            "https://*.up.railway.app",  # Railway deployments (includes backend)
+            r"https://.*\.vercel\.app",  # Vercel preview deployments (regex format)
+            r"https://.*\.truedy\.ai",  # Hetzner domain wildcards (regex format)
+            r"https://.*\.closi\.tech",  # Temporary hosting wildcards
         ])
     
     
@@ -70,9 +74,9 @@ class Settings(BaseSettings):
     CLERK_WEBHOOK_SECRET: str = os.getenv("CLERK_WEBHOOK_SECRET", "")
     
     # File Storage (Hetzner VPS - replaces AWS S3)
-    # Default to local storage path for localhost development
-    FILE_STORAGE_PATH: str = os.getenv("FILE_STORAGE_PATH", "./storage")
-    FILE_SERVER_URL: str = os.getenv("FILE_SERVER_URL", "http://localhost:8000")
+    # Default to mounted storage path for Hetzner deployment
+    FILE_STORAGE_PATH: str = os.getenv("FILE_STORAGE_PATH", "/mnt/storage")
+    FILE_SERVER_URL: str = os.getenv("FILE_SERVER_URL", "https://api.truedy.ai")
     # Legacy S3 bucket names (for backward compatibility in code)
     S3_BUCKET_UPLOADS: str = os.getenv("S3_BUCKET_UPLOADS", "trudy-uploads")
     S3_BUCKET_RECORDINGS: str = os.getenv("S3_BUCKET_RECORDINGS", "trudy-recordings")
@@ -109,7 +113,7 @@ class Settings(BaseSettings):
 
 
 # Initialize settings with graceful .env file error handling
-# On Railway, environment variables are set directly, so .env parsing errors are non-fatal
+# On Hetzner VPS, environment variables are set directly, so .env parsing errors are non-fatal
 try:
     settings = Settings()
 except Exception as e:

@@ -175,7 +175,7 @@ async def create_voice(
     training_samples = []
     if voice_data.strategy == "native" and voice_data.source.samples:
         for sample in voice_data.source.samples:
-            # Check S3 file exists
+            # Check storage file exists
             if not check_object_exists(settings.S3_BUCKET_UPLOADS, sample.s3_key):
                 raise NotFoundError("voice sample", sample.s3_key)
             
@@ -274,8 +274,6 @@ async def create_voice(
             {"id": current_user["client_id"]},
             {"credits_balance": client["credits_balance"] - 50},
         )
-    
-    # TODO: Trigger Step Function for native training
     
     response_data = {
         "data": VoiceResponse(**voice_record),

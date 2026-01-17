@@ -1018,7 +1018,7 @@ async def create_agent(
         ),
     }
     
-    # Emit EventBridge event
+    # Emit event
     await emit_agent_created(
         agent_id=agent_id,
         client_id=current_user["client_id"],
@@ -1202,7 +1202,7 @@ async def update_agent(
     # Get updated agent
     updated_agent = db.get_agent(agent_id, current_user["client_id"])
     
-    # Emit EventBridge event
+    # Emit event
     await emit_agent_updated(
         agent_id=agent_id,
         client_id=current_user["client_id"],

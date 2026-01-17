@@ -107,7 +107,7 @@ export function Sidebar() {
             let memberCount = 1
             try {
               // Query users for current client (RLS will filter automatically)
-              const usersResponse = await apiClient.get<{ data: any[] }>('/users')
+              const usersResponse = await apiClient.get<{ data: any[] }>(endpoints.auth.users)
               if (Array.isArray(usersResponse.data)) {
                 memberCount = usersResponse.data.length || 1
               }
