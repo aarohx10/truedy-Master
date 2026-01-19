@@ -22,7 +22,7 @@ interface AddCustomVoiceModalProps {
 
 interface UploadedFile {
   file: File
-  s3Key: string
+  storageKey: string
   duration: number
   text: string
 }
@@ -151,7 +151,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
     setIsUploading(true)
     try {
       // Get presigned URLs
-      const presignResponse = await apiClient.post<{ uploads: Array<{ doc_id: string; s3_key: string; url: string; headers: Record<string, string> }> }>(
+      const presignResponse = await apiClient.post<{ uploads: Array<{ doc_id: string; storage_key: string; url: string; headers: Record<string, string> }> }>(
         endpoints.voices.presign,
         {
           files: validFiles.map(file => {
@@ -183,7 +183,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
         throw new Error(`Mismatch: received ${uploads?.length || 0} presigned URLs for ${validFiles.length} files`)
       }
 
-      // Upload files to S3 and get durations
+          // Upload files to storage and get durations
       const uploaded: UploadedFile[] = []
       const uploadErrors: string[] = []
       
@@ -206,7 +206,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
             uploadBody = file
           }
 
-          // Upload to S3
+          // Upload to storage
           let uploadResponse: Response
           try {
             uploadResponse = await fetch(upload.url, {
@@ -221,14 +221,14 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
             })
           } catch (fetchError) {
             if (fetchError instanceof TypeError && fetchError.message.includes('fetch')) {
-              throw new Error(`Network error: Unable to connect to S3. This is usually a CORS configuration issue. Please ensure the S3 bucket has CORS enabled for your domain.`)
+              throw new Error(`Network error: Unable to connect to storage server. This is usually a CORS configuration issue.`)
             }
             throw fetchError
           }
 
           if (!uploadResponse.ok) {
             const errorText = await uploadResponse.text().catch(() => 'Unknown error')
-            throw new Error(`S3 upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`)
+            throw new Error(`Storage upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`)
           }
 
           // Get audio duration
@@ -240,11 +240,11 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
             duration = estimatedDuration
           }
 
-          const s3Key = upload.s3_key
+          const storageKey = upload.storage_key
 
           uploaded.push({
             file,
-            s3Key,
+            storageKey,
             duration,
             text: `Sample ${i + 1}`,
           })
@@ -327,24 +327,28 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
     // Set processing flag
     isProcessingRef.current = true
 
-    // For community voices (external), create voice directly with provider_voice_id
-    if (activeTab === 'community-voices') {
+    // For import (external), create voice directly with provider_voice_id
+    if (activeTab === 'import') {
       if (!selectedProvider) {
         toast({
           title: 'Provider required',
           description: 'Please select a provider',
           variant: 'destructive',
         })
+        isProcessingRef.current = false
         return
       }
 
-      // For ElevenLabs, provider_voice_id is required
-      if (selectedProvider === 'elevenlabs' && !providerVoiceId.trim()) {
+      // Voice ID is required for all providers
+      if (!providerVoiceId.trim()) {
+        const providerName = selectedProvider === 'elevenlabs' ? 'ElevenLabs' : 
+                            selectedProvider === 'cartesia' ? 'Cartesia' : 'LMNT'
         toast({
           title: 'Voice ID required',
-          description: 'Please enter the ElevenLabs voice ID (e.g., pNInz6obpgDQGcFmaJgB)',
+          description: `Please enter the ${providerName} voice ID`,
           variant: 'destructive',
         })
+        isProcessingRef.current = false
         return
       }
 
@@ -370,7 +374,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
         if (onSave) {
           onSave({
             name: voiceName,
-            source: 'community-voices',
+            source: 'voice-clone',
             provider: selectedProvider,
           })
         }
@@ -410,7 +414,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
             type: 'native',
             samples: uploadedFiles.map(file => ({
               text: file.text,
-              s3_key: file.s3Key,
+              storage_key: file.storageKey,
               duration_seconds: file.duration,
             })),
           },
@@ -478,14 +482,14 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
               Voice Clone
             </button>
             <button
-              onClick={() => setActiveTab('community-voices')}
+              onClick={() => setActiveTab('import')}
               className={`flex-1 py-1.5 sm:py-2 px-3 sm:px-4 text-xs sm:text-sm font-medium rounded-md transition-colors ${
-                activeTab === 'community-voices'
+                activeTab === 'import'
                   ? 'bg-white dark:bg-black text-gray-900 dark:text-white shadow-sm'
                   : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
               }`}
             >
-              Community Voices
+              Import
             </button>
           </div>
 
@@ -578,8 +582,8 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
             </div>
           )}
 
-          {/* Provider Selection (for Community Voices tab) */}
-          {activeTab === 'community-voices' && (
+          {/* Provider Selection (for Import tab) */}
+          {activeTab === 'import' && (
             <div className="space-y-2 sm:space-y-3">
               <label className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white">Select Provider</label>
               <div className="grid grid-cols-1 gap-2 sm:gap-3">
@@ -603,20 +607,20 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
                 </button>
 
                 <button
-                  onClick={() => setSelectedProvider('google-cartesia')}
+                  onClick={() => setSelectedProvider('cartesia')}
                   className={`p-3 sm:p-4 border-2 rounded-lg text-left transition-colors ${
-                    selectedProvider === 'google-cartesia'
+                    selectedProvider === 'cartesia'
                       ? 'border-primary bg-primary/10 dark:bg-primary/20'
                       : 'border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700'
                   }`}
                 >
                   <div className="flex items-center space-x-2 sm:space-x-3">
-                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-primary rounded-full flex items-center justify-center flex-shrink-0">
-                      <span className="text-white text-xs font-bold">G</span>
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+                      <span className="text-white text-xs font-bold">C</span>
                     </div>
                     <div className="min-w-0">
-                      <h3 className="text-xs sm:text-sm font-semibold text-gray-900 dark:text-white">Google Cartesia</h3>
-                      <p className="text-xs text-gray-600 dark:text-gray-400">Advanced voice synthesis</p>
+                      <h3 className="text-xs sm:text-sm font-semibold text-gray-900 dark:text-white">Cartesia</h3>
+                      <p className="text-xs text-gray-600 dark:text-gray-400">Ultra-fast voice synthesis</p>
                     </div>
                   </div>
                 </button>
@@ -641,20 +645,29 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
                 </button>
               </div>
               
-              {/* Provider Voice ID Input (for ElevenLabs) */}
-              {selectedProvider === 'elevenlabs' && (
+              {/* Provider Voice ID Input - Show for all providers */}
+              {selectedProvider && (
                 <div className="space-y-1.5 sm:space-y-2 mt-3">
                   <label className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white">
-                    ElevenLabs Voice ID <span className="text-red-500">*</span>
+                    {selectedProvider === 'elevenlabs' ? 'ElevenLabs' : 
+                     selectedProvider === 'cartesia' ? 'Cartesia' : 'LMNT'} Voice ID <span className="text-red-500">*</span>
                   </label>
                   <Input
                     value={providerVoiceId}
                     onChange={(e) => setProviderVoiceId(e.target.value)}
-                    placeholder="e.g., pNInz6obpgDQGcFmaJgB or Adam"
+                    placeholder={
+                      selectedProvider === 'elevenlabs' ? 'e.g., pNInz6obpgDQGcFmaJgB' :
+                      selectedProvider === 'cartesia' ? 'e.g., a0e99841-438c-4a64-b679-ae501e7d6091' :
+                      'e.g., lily or your custom voice ID'
+                    }
                     className="w-full text-sm"
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-500">
-                    Enter the ElevenLabs voice ID. You can find this in your ElevenLabs dashboard.
+                    {selectedProvider === 'elevenlabs' 
+                      ? 'Enter the ElevenLabs voice ID from your ElevenLabs dashboard.'
+                      : selectedProvider === 'cartesia'
+                      ? 'Enter the Cartesia voice ID from your Cartesia dashboard.'
+                      : 'Enter the LMNT voice ID from your LMNT dashboard.'}
                   </p>
                 </div>
               )}
@@ -691,7 +704,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
                 !hasAgreed || 
                 isUploading || 
                 isCreating ||
-                (activeTab === 'community-voices' && (!selectedProvider || (selectedProvider === 'elevenlabs' && !providerVoiceId.trim()))) ||
+                (activeTab === 'import' && (!selectedProvider || !providerVoiceId.trim())) ||
                 (activeTab === 'voice-clone' && uploadedFiles.length === 0)
               }
               className="w-full sm:w-auto bg-gray-600 dark:bg-gray-300 hover:bg-gray-700 dark:hover:bg-gray-400 text-white dark:text-black disabled:opacity-50 disabled:cursor-not-allowed text-sm"
