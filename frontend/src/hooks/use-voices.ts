@@ -6,25 +6,21 @@ import React from 'react'
 
 export function useVoices(source?: 'ultravox' | 'custom') {
   // Use full auth hook to ensure token AND clientId are both set
+  // When isLoading is false AND clientId is set, the apiClient is guaranteed to have token set
   const { clientId, isLoading: authLoading } = useAuthClient()
   const queryClient = useQueryClient()
-  
-  // Check if API client has token set (additional safety check)
-  const hasToken = apiClient.getClientId() !== null
   
   const query = useQuery({
     queryKey: ['voices', clientId, source],
     queryFn: async () => {
-      // Additional safety: verify clientId is set in apiClient before making request
-      if (!apiClient.getClientId()) {
-        throw new Error('API client not initialized with clientId')
-      }
       const url = source ? `${endpoints.voices.list}?source=${source}` : endpoints.voices.list
       const response = await apiClient.get<Voice[]>(url)
       return response.data
     },
     // Only fetch when auth is complete (not loading) AND clientId is available
-    enabled: !authLoading && !!clientId && hasToken,
+    // The useAuthClient hook guarantees that when isLoading=false and clientId exists,
+    // the apiClient has been configured with the token
+    enabled: !authLoading && !!clientId,
     staleTime: 0, // Always consider data stale to force refetch
     gcTime: 1000 * 60 * 10, // Keep in cache for 10 minutes
     refetchOnWindowFocus: true, // Refetch on window focus
@@ -33,13 +29,6 @@ export function useVoices(source?: 'ultravox' | 'custom') {
     retry: 2, // Retry twice on failure (in case of token race condition)
     retryDelay: 500, // Wait 500ms before retry
   })
-  
-  // Force refetch when clientId becomes available and auth is complete
-  React.useEffect(() => {
-    if (!authLoading && clientId && hasToken && !query.isFetching && !query.isLoading) {
-      queryClient.refetchQueries({ queryKey: ['voices', clientId, source] })
-    }
-  }, [clientId, authLoading, hasToken, queryClient, query.isFetching, query.isLoading, source])
   
   return query
 }
