@@ -8,11 +8,16 @@ import { debugLogger } from './debug-logger'
 // Global cache for clientId to prevent duplicate fetches
 let cachedClientId: string | null = null
 let isFetchingClientId = false
+let isTokenRefreshing = false // Track if a token refresh is in progress
 const clientIdPromise: { current: Promise<string | null> | null } = { current: null }
 
 /**
  * Hook to initialize API client with Clerk token and client_id
  * This replaces the NextAuth useAuthClient hook
+ * 
+ * NOTE: This hook does NOT handle redirects. Route protection is handled by
+ * Clerk middleware at the edge level. This hook only manages the API client
+ * token and client_id state.
  */
 export function useAuthClient() {
   const { user, isLoaded: userLoaded } = useUser()
@@ -21,12 +26,14 @@ export function useAuthClient() {
   const [clientId, setClientId] = useState<string | null>(cachedClientId)
   const [isLoading, setIsLoading] = useState(true)
   const hasFetchedRef = useRef(false)
+  const wasSignedInRef = useRef(false) // Track previous signed in state
 
   useEffect(() => {
     debugLogger.logAuth('AUTH_STATE', 'Auth state check', {
       userLoaded,
       isSignedIn,
       hasUser: !!user,
+      isTokenRefreshing,
     })
 
     if (!userLoaded) {
@@ -35,13 +42,26 @@ export function useAuthClient() {
       return
     }
 
+    // Track if user was previously signed in
+    const wasSignedIn = wasSignedInRef.current
+    wasSignedInRef.current = !!isSignedIn
+
     if (!isSignedIn || !user) {
-      // Not authenticated - clear everything
-      debugLogger.logAuth('AUTH_STATE', 'User not authenticated, clearing tokens')
-      apiClient.clearToken()
-      setClientId(null)
-      cachedClientId = null
-      hasFetchedRef.current = false
+      // Only clear tokens if we were previously signed in and are now definitely signed out
+      // This prevents false-negative clearing during token refresh operations
+      if (wasSignedIn && !isTokenRefreshing) {
+        debugLogger.logAuth('AUTH_STATE', 'User signed out, clearing tokens')
+        apiClient.clearToken()
+        setClientId(null)
+        cachedClientId = null
+        hasFetchedRef.current = false
+      } else if (!wasSignedIn) {
+        // User was never signed in during this session
+        debugLogger.logAuth('AUTH_STATE', 'User not authenticated')
+      } else {
+        // Token refresh might be in progress, don't clear yet
+        debugLogger.logAuth('AUTH_STATE', 'Auth state temporarily false, may be refreshing')
+      }
       setIsLoading(false)
       return
     }
@@ -165,10 +185,12 @@ export function useAuthClient() {
                   }
                   
                   // If 401/403, token might be expired - try to refresh
-                  if (errorMessage?.includes('401') || errorMessage?.includes('403')) {
+                  if (errorMessage?.includes('401') || errorMessage?.includes('403') || errorMessage?.includes('Session expired')) {
                     debugLogger.logAuth('TOKEN_REFRESH', 'Token expired, attempting refresh')
+                    isTokenRefreshing = true
                     try {
-                      // Get fresh token
+                      // Get fresh token with a small delay to allow Clerk to refresh
+                      await new Promise(resolve => setTimeout(resolve, 100))
                       const freshToken = await getToken({ template: undefined })
                       if (freshToken) {
                         debugLogger.logAuth('TOKEN_REFRESH', 'Token refreshed, retrying /auth/me')
@@ -188,6 +210,8 @@ export function useAuthClient() {
                     } catch (retryError) {
                       debugLogger.logError('TOKEN_REFRESH', retryError instanceof Error ? retryError : new Error(String(retryError)))
                       console.error('Retry after token refresh failed:', retryError)
+                    } finally {
+                      isTokenRefreshing = false
                     }
                   }
                   
@@ -208,6 +232,9 @@ export function useAuthClient() {
               if (id) {
                 setClientId(id)
               }
+              setIsLoading(false)
+            }).catch(() => {
+              // Ensure isLoading is set to false even if promise fails
               setIsLoading(false)
             })
           }

@@ -17,10 +17,9 @@ export function useVoices(source?: 'ultravox' | 'custom') {
       const response = await apiClient.get<Voice[]>(url)
       return response.data
     },
-    // Only fetch when auth is complete (not loading) AND clientId is available
-    // The useAuthClient hook guarantees that when isLoading=false and clientId exists,
-    // the apiClient has been configured with the token
-    enabled: !authLoading && !!clientId,
+    // Only fetch when auth is complete (not loading)
+    // The backend extracts client_id from the JWT token, so we don't need to wait for clientId
+    enabled: !authLoading,
     staleTime: 0, // Always consider data stale to force refetch
     gcTime: 1000 * 60 * 10, // Keep in cache for 10 minutes
     refetchOnWindowFocus: true, // Refetch on window focus
