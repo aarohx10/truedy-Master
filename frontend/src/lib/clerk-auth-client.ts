@@ -25,6 +25,7 @@ export function useAuthClient() {
   const { organization } = useOrganization()
   const [clientId, setClientId] = useState<string | null>(cachedClientId)
   const [isLoading, setIsLoading] = useState(true)
+  const [hasToken, setHasToken] = useState(false) // Track if token has been set on apiClient
   const hasFetchedRef = useRef(false)
   const wasSignedInRef = useRef(false) // Track previous signed in state
 
@@ -52,6 +53,7 @@ export function useAuthClient() {
       if (wasSignedIn && !isTokenRefreshing) {
         debugLogger.logAuth('AUTH_STATE', 'User signed out, clearing tokens')
         apiClient.clearToken()
+        setHasToken(false)
         setClientId(null)
         cachedClientId = null
         hasFetchedRef.current = false
@@ -112,6 +114,7 @@ export function useAuthClient() {
         }
         
         apiClient.setToken(token)
+        setHasToken(true) // Mark that token is now available on apiClient
 
         // Try to get client_id from organization metadata or fetch from API
         let extractedClientId: string | null = null
@@ -268,6 +271,7 @@ export function useAuthClient() {
       } : null,
     } : null,
     isLoading,
+    hasToken, // Indicates if apiClient has a valid token set
     clientId,
     organization,
   }

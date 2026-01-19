@@ -5,9 +5,8 @@ import { useAuthClient, useClientId } from '@/lib/clerk-auth-client'
 import React from 'react'
 
 export function useVoices(source?: 'ultravox' | 'custom') {
-  // Use full auth hook to ensure token AND clientId are both set
-  // When isLoading is false AND clientId is set, the apiClient is guaranteed to have token set
-  const { clientId, isLoading: authLoading } = useAuthClient()
+  // Use full auth hook - hasToken indicates apiClient.setToken() has been called
+  const { clientId, isLoading: authLoading, hasToken } = useAuthClient()
   const queryClient = useQueryClient()
   
   const query = useQuery({
@@ -17,9 +16,9 @@ export function useVoices(source?: 'ultravox' | 'custom') {
       const response = await apiClient.get<Voice[]>(url)
       return response.data
     },
-    // Only fetch when auth is complete (not loading)
-    // The backend extracts client_id from the JWT token, so we don't need to wait for clientId
-    enabled: !authLoading,
+    // Wait for auth complete AND token to be set on apiClient
+    // hasToken is set to true right after apiClient.setToken() is called
+    enabled: !authLoading && hasToken,
     staleTime: 0, // Always consider data stale to force refetch
     gcTime: 1000 * 60 * 10, // Keep in cache for 10 minutes
     refetchOnWindowFocus: true, // Refetch on window focus
