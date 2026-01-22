@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Upload, Cloud, X, Loader2 } from 'lucide-react'
 import { useCreateVoice } from '@/hooks/use-voices'
-import { apiClient, endpoints } from '@/lib/api'
+import { apiClient } from '@/lib/api'
 import { useToast } from '@/hooks/use-toast'
 
 interface AddCustomVoiceModalProps {
@@ -22,7 +22,6 @@ interface AddCustomVoiceModalProps {
 
 interface UploadedFile {
   file: File
-  storageKey: string
   duration: number
   text: string
 }
@@ -34,7 +33,6 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
   const [selectedProvider, setSelectedProvider] = useState('')
   const [providerVoiceId, setProviderVoiceId] = useState('')
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
-  const [isUploading, setIsUploading] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isProcessingRef = useRef(false) // Prevent multiple simultaneous calls
@@ -148,141 +146,43 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
       return
     }
 
-    setIsUploading(true)
-    try {
-      // Get presigned URLs
-      const presignResponse = await apiClient.post<{ uploads: Array<{ doc_id: string; storage_key: string; url: string; headers: Record<string, string> }> }>(
-        endpoints.voices.presign,
-        {
-          files: validFiles.map(file => {
-            // Determine content type from file extension if MIME type is missing
-            const extension = '.' + file.name.split('.').pop()?.toLowerCase()
-            const extensionToMime: Record<string, string> = {
-              '.wav': 'audio/wav',
-              '.mp3': 'audio/mpeg',
-              '.mpeg': 'audio/mpeg',
-              '.webm': 'audio/webm',
-              '.ogg': 'audio/ogg',
-              '.m4a': 'audio/mp4',
-              '.aac': 'audio/aac',
-              '.flac': 'audio/flac',
-            }
-            
-            return {
-              filename: file.name,
-              content_type: file.type || extensionToMime[extension] || 'audio/wav',
-              file_size: file.size,
-            }
-          }),
-        }
-      )
-
-      const uploads = presignResponse.data.uploads
-
-      if (!uploads || uploads.length !== validFiles.length) {
-        throw new Error(`Mismatch: received ${uploads?.length || 0} presigned URLs for ${validFiles.length} files`)
-      }
-
-          // Upload files to storage and get durations
-      const uploaded: UploadedFile[] = []
-      const uploadErrors: string[] = []
-      
-      for (let i = 0; i < validFiles.length; i++) {
-        const file = validFiles[i]
-        const upload = uploads[i]
-
-        try {
-          const contentType = file.type || upload.headers['Content-Type'] || 'audio/wav'
-          
-          if (!upload.url || typeof upload.url !== 'string' || !upload.url.startsWith('http')) {
-            throw new Error(`Invalid presigned URL received for ${file.name}. Please try again.`)
-          }
-
-          // For downloaded files, read as ArrayBuffer
-          let uploadBody: Blob | ArrayBuffer
-          try {
-            uploadBody = await file.arrayBuffer()
-          } catch (error) {
-            uploadBody = file
-          }
-
-          // Upload to storage
-          let uploadResponse: Response
-          try {
-            uploadResponse = await fetch(upload.url, {
-              method: 'PUT',
-              headers: {
-                'Content-Type': contentType,
-              },
-              body: uploadBody,
-              mode: 'cors',
-              credentials: 'omit',
-              cache: 'no-cache',
-            })
-          } catch (fetchError) {
-            if (fetchError instanceof TypeError && fetchError.message.includes('fetch')) {
-              throw new Error(`Network error: Unable to connect to storage server. This is usually a CORS configuration issue.`)
-            }
-            throw fetchError
-          }
-
-          if (!uploadResponse.ok) {
-            const errorText = await uploadResponse.text().catch(() => 'Unknown error')
-            throw new Error(`Storage upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`)
-          }
-
-          // Get audio duration
-          let duration = 0
-          try {
-            duration = await getAudioDuration(file)
-          } catch (error) {
-            const estimatedDuration = Math.max(5, Math.round((file.size / 1024 / 1024) * 60))
-            duration = estimatedDuration
-          }
-
-          const storageKey = upload.storage_key
-
-          uploaded.push({
-            file,
-            storageKey,
-            duration,
-            text: `Sample ${i + 1}`,
-          })
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Upload failed'
-          uploadErrors.push(`${file.name}: ${errorMessage}`)
-        }
-      }
-
-      if (uploadErrors.length > 0) {
-        toast({
-          title: 'Some files failed to upload',
-          description: uploadErrors.join(', '),
-          variant: 'destructive',
-        })
-      }
-
-      if (uploaded.length === 0) {
-        throw new Error('All files failed to upload')
-      }
-
-      setUploadedFiles(prev => [...prev, ...uploaded])
-      
-      if (uploaded.length > 0) {
-        toast({
-          title: 'Files uploaded',
-          description: `Successfully uploaded ${uploaded.length} file(s)${uploadErrors.length > 0 ? ` (${uploadErrors.length} failed)` : ''}`,
-        })
-      }
-    } catch (error) {
+    // SIMPLIFIED: Just store files, no upload until Save
+    if (validFiles.length + uploadedFiles.length > 10) {
       toast({
-        title: 'Upload failed',
-        description: error instanceof Error ? error.message : 'Failed to upload files',
+        title: 'Too many files',
+        description: 'Please upload maximum 10 files',
         variant: 'destructive',
       })
-    } finally {
-      setIsUploading(false)
+      return
     }
+
+    // Store files directly - upload happens when user clicks Save
+    const newFiles: UploadedFile[] = []
+    for (let i = 0; i < validFiles.length; i++) {
+      const file = validFiles[i]
+      let duration = 0
+      
+      // Try to get duration (non-blocking)
+      try {
+        duration = await getAudioDuration(file)
+      } catch (error) {
+        // Estimate duration if we can't calculate it
+        duration = Math.max(5, Math.round((file.size / 1024 / 1024) * 60))
+      }
+      
+      newFiles.push({
+        file,
+        duration,
+        text: `Sample ${uploadedFiles.length + i + 1}`,
+      })
+    }
+
+    setUploadedFiles(prev => [...prev, ...newFiles])
+    
+    toast({
+      title: 'Files added',
+      description: `Added ${newFiles.length} file(s). Click Save to create voice.`,
+    })
   }, [toast])
 
   // Handle file input change
@@ -316,7 +216,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
   // Handle save/create voice
   const handleSave = async () => {
     // Prevent multiple simultaneous calls
-    if (isCreating || isUploading || isProcessingRef.current) {
+    if (isCreating || isProcessingRef.current) {
       return
     }
 
@@ -393,7 +293,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
       return
     }
 
-    // For voice clone (native), need to create voice with uploaded files
+    // For voice clone (native) - SIMPLIFIED: Direct FormData upload
     if (activeTab === 'voice-clone') {
       if (uploadedFiles.length === 0) {
         isProcessingRef.current = false
@@ -407,21 +307,19 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
 
       setIsCreating(true)
       try {
-        await createVoiceMutation.mutateAsync({
-          name: voiceName,
-          strategy: 'native',
-          source: {
-            type: 'native',
-            samples: uploadedFiles.map(file => ({
-              text: file.text,
-              storage_key: file.storageKey,
-              duration_seconds: file.duration,
-            })),
-          },
-          provider_overrides: {
-            provider: 'elevenlabs',
-          },
+        // Create FormData - ONE REQUEST, that's it!
+        const formData = new FormData()
+        formData.append('name', voiceName)
+        formData.append('strategy', 'native')
+        formData.append('provider', 'elevenlabs')
+        
+        // Add files directly
+        uploadedFiles.forEach((file) => {
+          formData.append('files', file.file)
         })
+
+        // ONE API call - no presign, no separate uploads
+        await apiClient.upload('/voices', formData)
 
         toast({
           title: 'Voice created',
@@ -515,27 +413,23 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
                 multiple
                 onChange={handleFileInputChange}
                 className="hidden"
-                disabled={isUploading}
+                disabled={isCreating}
               />
               <div
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
-                onClick={() => !isUploading && fileInputRef.current?.click()}
+                onClick={() => !isCreating && fileInputRef.current?.click()}
                 className={`border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-4 sm:p-6 text-center hover:border-gray-400 dark:hover:border-gray-600 transition-colors ${
-                  isUploading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                  isCreating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                 }`}
               >
                 <div className="flex flex-col items-center space-y-2 sm:space-y-3">
-                  {isUploading ? (
-                    <Loader2 className="h-5 w-5 sm:h-6 sm:w-6 text-gray-600 dark:text-gray-400 animate-spin" />
-                  ) : (
-                    <div className="p-2 sm:p-3 bg-gray-100 dark:bg-gray-900 rounded-full">
-                      <Upload className="h-5 w-5 sm:h-6 sm:w-6 text-gray-600 dark:text-gray-400" />
-                    </div>
-                  )}
+                  <div className="p-2 sm:p-3 bg-gray-100 dark:bg-gray-900 rounded-full">
+                    <Upload className="h-5 w-5 sm:h-6 sm:w-6 text-gray-600 dark:text-gray-400" />
+                  </div>
                   <div>
                     <p className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white">
-                      {isUploading ? 'Uploading...' : 'Choose files or drag & drop here'}
+                      Choose files or drag & drop here
                     </p>
                     <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
                       Audio formats (WAV, MP3, WebM, OGG), up to 10 MB each, max 10 files
@@ -702,7 +596,6 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
               disabled={
                 !voiceName || 
                 !hasAgreed || 
-                isUploading || 
                 isCreating ||
                 (activeTab === 'import' && (!selectedProvider || !providerVoiceId.trim())) ||
                 (activeTab === 'voice-clone' && uploadedFiles.length === 0)
@@ -711,7 +604,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
             >
               {isCreating ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Creating...
                 </>
               ) : (

@@ -1,22 +1,28 @@
-import { Resend } from 'resend'
-
 const resendApiKey = process.env.RESEND_API_KEY || ''
 
-if (!resendApiKey) {
-  console.warn('RESEND_API_KEY not configured. Email functionality will be disabled.')
+// Get the "from" email - use verified domain if set, otherwise use test domain
+function getFromEmail(): string {
+  const customFrom = process.env.RESEND_FROM_EMAIL
+  if (customFrom) {
+    return customFrom
+  }
+  // Use verified domain: support.closi.tech
+  return 'Trudy Admin <admin@support.closi.tech>'
 }
 
-const resend = resendApiKey ? new Resend(resendApiKey) : null
-
-export async function sendOTPEmail(email: string, otpCode: string): Promise<{ success: boolean; error?: string }> {
-  if (!resend) {
-    return { success: false, error: 'Email service not configured' }
+export async function sendOTPEmail(email: string, otpCode: string): Promise<{ success: boolean; error?: string; data?: any }> {
+  if (!resendApiKey) {
+    const error = 'RESEND_API_KEY is not configured. Add it to Vercel environment variables.'
+    console.error('[EMAIL]', error)
+    return { success: false, error }
   }
 
+  const fromEmail = getFromEmail()
+
   try {
-    const { error } = await resend.emails.send({
-      from: 'Trudy Admin <admin@truedy.ai>', // Update with your verified domain
-      to: email,
+    const payload = {
+      from: fromEmail,
+      to: [email],
       subject: 'Your Admin Login Code',
       html: `
         <!DOCTYPE html>
@@ -47,17 +53,44 @@ export async function sendOTPEmail(email: string, otpCode: string): Promise<{ su
           </body>
         </html>
       `,
-      text: `Your Trudy Admin login code is: ${otpCode}\n\nThis code will expire in 5 minutes.\n\nIf you didn't request this code, please ignore this email.`,
-    })
-
-    if (error) {
-      console.error('Resend error:', error)
-      return { success: false, error: error.message || 'Failed to send email' }
+      reply_to: fromEmail.includes('@resend.dev') ? 'onboarding@resend.dev' : fromEmail.split('<')[1]?.split('>')[0] || 'admin@support.closi.tech',
     }
 
-    return { success: true }
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${resendApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      let error = result.message || `Resend API error: ${response.status}`
+      
+      if (result.message?.includes('testing emails') || result.message?.includes('verify a domain')) {
+        error = `Resend test domain limitation: ${result.message}. To fix: 1) Verify your domain at resend.com/domains, 2) Set RESEND_FROM_EMAIL in Vercel to use your verified domain, 3) Redeploy.`
+      }
+      
+      console.error('[EMAIL] Failed to send email:', error)
+      return { 
+        success: false, 
+        error,
+        data: result
+      }
+    }
+
+    return { 
+      success: true,
+      data: result
+    }
   } catch (error: any) {
-    console.error('Error sending OTP email:', error)
-    return { success: false, error: error.message || 'Failed to send email' }
+    console.error('[EMAIL] Exception sending email:', error?.message || error)
+    return { 
+      success: false, 
+      error: error?.message || 'Network error sending email'
+    }
   }
 }

@@ -40,35 +40,62 @@ export async function storeOTP(email: string, otpCode: string): Promise<{ succes
 }
 
 /**
- * Verify OTP code
+ * Verify OTP code with atomic update to prevent race conditions
  */
 export async function verifyOTP(email: string, otpCode: string): Promise<{ success: boolean; error?: string }> {
   try {
     const normalizedEmail = email.toLowerCase().trim()
+    const normalizedOTP = otpCode.trim()
+    const now = new Date().toISOString()
 
-    // Find valid, unused OTP
-    const { data, error } = await supabaseAdmin
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[OTP VERIFY] Verifying OTP for:', normalizedEmail)
+    }
+
+    // Atomic update: Mark OTP as used only if it's unused and not expired
+    // This prevents race conditions when user clicks multiple times
+    const { data: updatedRows, error: updateError } = await supabaseAdmin
+      .from('admin_otps')
+      .update({ used: true })
+      .eq('email', normalizedEmail)
+      .eq('otp_code', normalizedOTP)
+      .eq('used', false)
+      .gt('expires_at', now)
+      .select('id')
+
+    if (updateError) {
+      console.error('Error verifying OTP:', updateError)
+      return { success: false, error: 'Database error verifying OTP' }
+    }
+
+    // If rows were updated, OTP is valid
+    if (updatedRows && updatedRows.length > 0) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[OTP VERIFY] OTP verified successfully')
+      }
+      return { success: true }
+    }
+
+    // No rows updated - check why
+    // Check if OTP exists but is expired
+    const { data: expiredData } = await supabaseAdmin
       .from('admin_otps')
       .select('id, expires_at, used')
       .eq('email', normalizedEmail)
-      .eq('otp_code', otpCode)
-      .eq('used', false)
-      .gt('expires_at', new Date().toISOString())
-      .order('created_at', { ascending: false })
+      .eq('otp_code', normalizedOTP)
       .limit(1)
-      .single()
+      .maybeSingle()
 
-    if (error || !data) {
-      return { success: false, error: 'Invalid or expired OTP code' }
+    if (expiredData) {
+      if (expiredData.used) {
+        return { success: false, error: 'OTP code has already been used' }
+      }
+      if (new Date(expiredData.expires_at) <= new Date(now)) {
+        return { success: false, error: 'OTP code has expired. Please request a new one.' }
+      }
     }
 
-    // Mark OTP as used
-    await supabaseAdmin
-      .from('admin_otps')
-      .update({ used: true })
-      .eq('id', data.id)
-
-    return { success: true }
+    return { success: false, error: 'Invalid OTP code' }
   } catch (error: any) {
     console.error('Error verifying OTP:', error)
     return { success: false, error: error.message || 'Failed to verify OTP' }

@@ -98,6 +98,13 @@ class DatabaseService:
     # Generic CRUD operations
     def select(self, table: str, filters: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None) -> List[Dict[str, Any]]:
         """Select records from table"""
+        # #region agent log
+        import json
+        try:
+            with open(r"d:\Users\Admin\Downloads\Truedy Main\.cursor\debug.log", "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"K","location":"database.py:99","message":"Database select called","data":{"table":table,"filters":filters,"order_by":order_by},"timestamp":int(__import__("time").time()*1000)})+"\n")
+        except: pass
+        # #endregion
         query = self.client.table(table).select("*")
         
         if filters:
@@ -105,7 +112,14 @@ class DatabaseService:
                 query = query.eq(key, value)
         
         if order_by:
-            query = query.order(order_by, desc=True)
+            # Handle "column DESC" or "column ASC" format
+            parts = order_by.split()
+            col = parts[0]
+            descending = True
+            if len(parts) > 1:
+                descending = parts[1].upper() == "DESC"
+            
+            query = query.order(col, desc=descending)
         
         response = query.execute()
         return response.data if response.data else []
@@ -224,7 +238,14 @@ class DatabaseAdminService:
                 query = query.eq(key, value)
         
         if order_by:
-            query = query.order(order_by, desc=True)
+            # Handle "column DESC" or "column ASC" format
+            parts = order_by.split()
+            col = parts[0]
+            descending = True
+            if len(parts) > 1:
+                descending = parts[1].upper() == "DESC"
+            
+            query = query.order(col, desc=descending)
         
         response = query.execute()
         return response.data if response.data else []

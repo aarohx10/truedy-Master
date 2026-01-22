@@ -1,39 +1,71 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient, endpoints } from '@/lib/api'
+import { authManager } from '@/lib/auth-manager'
 import { Agent, CreateAgentData, UpdateAgentData } from '@/types'
-import { useClientId } from '@/lib/clerk-auth-client'
+import { useClientId, useAuthReady } from '@/lib/clerk-auth-client'
 
 export function useAgents() {
   const clientId = useClientId()
+  const isAuthReady = useAuthReady()
   
   return useQuery({
     queryKey: ['agents', clientId],
     queryFn: async () => {
+      // Wait for auth before fetching
+      if (!authManager.hasToken()) {
+        await authManager.waitForAuth(5000)
+        if (!authManager.hasToken()) {
+          throw new Error('Not authenticated')
+        }
+      }
+      
       const response = await apiClient.get<Agent[]>(endpoints.agents.list)
       return response.data
     },
-    enabled: !!clientId, // Only fetch when clientId is available
+    enabled: isAuthReady && authManager.hasToken(), // Only fetch when auth is ready
     staleTime: 1000 * 60, // Consider data fresh for 60 seconds (longer to prevent flickering)
     gcTime: 1000 * 60 * 10, // Keep in cache for 10 minutes
     refetchOnWindowFocus: false, // Don't refetch on window focus for better performance
     refetchOnMount: false, // Don't refetch if data is fresh (prevents flickering)
     refetchOnReconnect: true, // Refetch on reconnect
-    // Don't use placeholderData - it causes flickering
-    // Instead, we'll handle loading state in the component using cached data
-    retry: 1, // Only retry once on failure
+    retry: (failureCount, error) => {
+      // Don't retry auth errors - let authManager handle refresh
+      if (error instanceof Error && 
+          (error.message.includes('Session expired') || 
+           error.message.includes('Not authenticated') ||
+           error.message.includes('401'))) {
+        return false
+      }
+      return failureCount < 2
+    },
   })
 }
 
 export function useAgent(id: string) {
   const clientId = useClientId()
+  const isAuthReady = useAuthReady()
   
   return useQuery({
     queryKey: ['agents', clientId, id],
     queryFn: async () => {
+      // Wait for auth before fetching
+      if (!authManager.hasToken()) {
+        await authManager.waitForAuth(5000)
+        if (!authManager.hasToken()) {
+          throw new Error('Not authenticated')
+        }
+      }
+      
       const response = await apiClient.get<Agent>(endpoints.agents.get(id))
       return response.data
     },
-    enabled: !!id && !!clientId,
+    enabled: !!id && isAuthReady && authManager.hasToken(),
+    retry: (failureCount, error) => {
+      if (error instanceof Error && error.message.includes('Session expired')) {
+        return false
+      }
+      return failureCount < 2
+    },
   })
 }
 
@@ -43,6 +75,14 @@ export function useCreateAgent() {
 
   return useMutation({
     mutationFn: async (data: CreateAgentData) => {
+      // Ensure auth is ready before mutation
+      if (!authManager.hasToken()) {
+        await authManager.waitForAuth(5000)
+        if (!authManager.hasToken()) {
+          throw new Error('Not authenticated')
+        }
+      }
+      
       const response = await apiClient.post<Agent>(endpoints.agents.create, data)
       return response.data
     },
@@ -68,6 +108,14 @@ export function useUpdateAgent() {
 
   return useMutation({
     mutationFn: async ({ id, data }: { id: string; data: UpdateAgentData }) => {
+      // Ensure auth is ready before mutation
+      if (!authManager.hasToken()) {
+        await authManager.waitForAuth(5000)
+        if (!authManager.hasToken()) {
+          throw new Error('Not authenticated')
+        }
+      }
+      
       const response = await apiClient.patch<Agent>(
         endpoints.agents.update(id),
         data
@@ -93,6 +141,14 @@ export function useDeleteAgent() {
 
   return useMutation({
     mutationFn: async (id: string) => {
+      // Ensure auth is ready before mutation
+      if (!authManager.hasToken()) {
+        await authManager.waitForAuth(5000)
+        if (!authManager.hasToken()) {
+          throw new Error('Not authenticated')
+        }
+      }
+      
       await apiClient.delete(endpoints.agents.delete(id))
     },
     onSuccess: (_, deletedId) => {
@@ -112,6 +168,14 @@ export function useSyncAgentWithUltravox() {
 
   return useMutation({
     mutationFn: async (id: string) => {
+      // Ensure auth is ready before mutation
+      if (!authManager.hasToken()) {
+        await authManager.waitForAuth(5000)
+        if (!authManager.hasToken()) {
+          throw new Error('Not authenticated')
+        }
+      }
+      
       const response = await apiClient.post<Agent>(endpoints.agents.sync(id), {})
       return response.data
     },
@@ -120,4 +184,3 @@ export function useSyncAgentWithUltravox() {
     },
   })
 }
-

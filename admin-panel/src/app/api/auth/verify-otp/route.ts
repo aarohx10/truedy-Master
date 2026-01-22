@@ -24,20 +24,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verify email matches admin username
-    const adminEmail = process.env.ADMIN_EMAIL || process.env.ADMIN_USERNAME || ''
-    const normalizedEmail = email.toLowerCase().trim()
-
-    if (adminEmail && normalizedEmail !== adminEmail.toLowerCase().trim()) {
-      return NextResponse.json(
-        { error: 'Invalid credentials' },
-        { status: 401 }
-      )
-    }
-
     // Generate JWT token
     const username = process.env.ADMIN_USERNAME || 'admin'
-    const token = generateToken(username)
+    let token: string
+    try {
+      token = generateToken(username)
+    } catch (error: any) {
+      console.error('Error generating token:', error)
+      return NextResponse.json(
+        { error: 'Authentication configuration error' },
+        { status: 500 }
+      )
+    }
 
     // Set HTTP-only cookie
     const response = NextResponse.json({ success: true })
@@ -50,7 +48,7 @@ export async function POST(request: NextRequest) {
     })
 
     return response
-  } catch (error) {
+  } catch (error: any) {
     console.error('Verify OTP error:', error)
     return NextResponse.json(
       { error: 'Internal server error' },

@@ -6,6 +6,7 @@ import { ThemeProvider } from 'next-themes'
 import { queryClient } from '@/lib/api'
 import { Toaster } from '@/components/ui/toaster'
 import { AuthProvider } from '@/components/auth/auth-provider'
+import { AuthErrorBoundary } from '@/components/auth/auth-error-boundary'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -18,7 +19,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
           enableColorScheme
         >
           <AuthProvider>
-            {children}
+            <AuthErrorBoundary>
+              {children}
+            </AuthErrorBoundary>
             <Toaster />
           </AuthProvider>
         </ThemeProvider>

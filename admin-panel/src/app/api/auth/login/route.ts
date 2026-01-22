@@ -1,5 +1,3 @@
-// Legacy password-based login (kept for backward compatibility)
-// New login flow uses OTP via /api/auth/request-otp and /api/auth/verify-otp
 import { NextRequest, NextResponse } from 'next/server'
 import { login } from '@/lib/auth'
 
@@ -54,6 +52,13 @@ export async function POST(request: NextRequest) {
         { error: 'Username and password are required' },
         { status: 400 }
       )
+    }
+
+    // Log for debugging (only in development)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[LOGIN] Attempt:', { username, hasPassword: !!password, passwordLength: password.length })
+      console.log('[LOGIN] Expected username:', process.env.ADMIN_USERNAME || 'admin')
+      console.log('[LOGIN] Has password hash:', !!process.env.ADMIN_PASSWORD_HASH)
     }
 
     const result = await login(username, password)

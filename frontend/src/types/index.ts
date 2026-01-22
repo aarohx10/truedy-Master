@@ -71,7 +71,7 @@ export interface Voice {
   id: string;
   client_id: string;
   name: string;
-  provider: string; // 'elevenlabs', 'google', 'aws', 'azure', 'openai'
+  provider: string; // 'elevenlabs', 'google', 'azure', 'openai'
   type: 'custom' | 'reference';
   language: string;
   status: VoiceStatus;
@@ -464,7 +464,7 @@ export interface CampaignContact {
 }
 
 export interface CampaignContactsUpload {
-  s3_key?: string;
+  storage_key?: string;
   contacts?: CampaignContact[];
 }
 

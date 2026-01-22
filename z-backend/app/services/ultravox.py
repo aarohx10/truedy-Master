@@ -1,5 +1,5 @@
 """
-Ultravox API Client
+Ultravox API Client + ElevenLabs Voice Cloning
 """
 import httpx
 import logging
@@ -11,11 +11,152 @@ from app.core.exceptions import ProviderError
 logger = logging.getLogger(__name__)
 
 
+class ElevenLabsClient:
+    """Client for ElevenLabs API - Voice Cloning"""
+    
+    def __init__(self):
+        self.base_url = "https://api.elevenlabs.io/v1"
+        self.api_key = settings.ELEVENLABS_API_KEY
+        if not self.api_key:
+            logger.warning("⚠️  ELEVENLABS_API_KEY is not set. Voice cloning will be disabled.")
+        else:
+            logger.info("✅ ElevenLabs client initialized")
+    
+    async def clone_voice(
+        self,
+        name: str,
+        audio_files: List[bytes],
+        description: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Clone a voice using ElevenLabs API.
+        
+        Args:
+            name: Name for the cloned voice
+            audio_files: List of audio file bytes (WAV, MP3, etc.)
+            description: Optional description for the voice
+        
+        Returns:
+            Dict with voice_id and other details from ElevenLabs
+        """
+        if not self.api_key:
+            raise ProviderError(
+                provider="elevenlabs",
+                message="ElevenLabs API key is not configured",
+                http_status=500,
+            )
+        
+        url = f"{self.base_url}/voices/add"
+        logger.info(f"[ELEVENLABS] Creating voice clone | name={name} | files_count={len(audio_files)}")
+        
+        async def _make_request():
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                # Build multipart form data
+                files = []
+                for i, audio_bytes in enumerate(audio_files):
+                    files.append(("files", (f"sample_{i}.mp3", audio_bytes, "audio/mpeg")))
+                
+                data = {"name": name}
+                if description:
+                    data["description"] = description
+                
+                response = await client.post(
+                    url,
+                    headers={"xi-api-key": self.api_key},
+                    data=data,
+                    files=files,
+                )
+                
+                logger.debug(f"[ELEVENLABS] Response | status_code={response.status_code}")
+                if response.status_code >= 400:
+                    error_text = response.text[:500] if response.text else "No response body"
+                    logger.error(f"[ELEVENLABS] Error | status={response.status_code} | response={error_text}")
+                response.raise_for_status()
+                return response.json()
+        
+        try:
+            result = await retry_with_backoff(_make_request)
+            voice_id = result.get("voice_id")
+            logger.info(f"[ELEVENLABS] Voice clone created | voice_id={voice_id} | name={name}")
+            return result
+        except httpx.HTTPStatusError as e:
+            error_detail = "Unknown error"
+            try:
+                error_body = e.response.json()
+                error_detail = error_body.get("detail", {}).get("message", str(e)) if isinstance(error_body.get("detail"), dict) else str(error_body.get("detail", e))
+            except:
+                error_detail = e.response.text[:200] if e.response.text else str(e)
+            
+            logger.error(f"[ELEVENLABS] Clone failed | status={e.response.status_code} | error={error_detail}")
+            raise ProviderError(
+                provider="elevenlabs",
+                message=f"ElevenLabs voice cloning failed: {error_detail}",
+                http_status=e.response.status_code,
+            )
+        except httpx.RequestError as e:
+            logger.error(f"[ELEVENLABS] Request error: {e}")
+            raise ProviderError(
+                provider="elevenlabs",
+                message=f"ElevenLabs API request failed: {e}",
+                http_status=502,
+            )
+    
+    async def get_voice(self, voice_id: str) -> Dict[str, Any]:
+        """Get voice details from ElevenLabs"""
+        if not self.api_key:
+            raise ProviderError(
+                provider="elevenlabs",
+                message="ElevenLabs API key is not configured",
+                http_status=500,
+            )
+        
+        url = f"{self.base_url}/voices/{voice_id}"
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                url,
+                headers={"xi-api-key": self.api_key},
+            )
+            response.raise_for_status()
+            return response.json()
+    
+    async def delete_voice(self, voice_id: str) -> bool:
+        """Delete a voice from ElevenLabs"""
+        if not self.api_key:
+            raise ProviderError(
+                provider="elevenlabs",
+                message="ElevenLabs API key is not configured",
+                http_status=500,
+            )
+        
+        url = f"{self.base_url}/voices/{voice_id}"
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(
+                url,
+                headers={"xi-api-key": self.api_key},
+            )
+            if response.status_code == 200:
+                logger.info(f"[ELEVENLABS] Voice deleted | voice_id={voice_id}")
+                return True
+            logger.warning(f"[ELEVENLABS] Delete failed | voice_id={voice_id} | status={response.status_code}")
+            return False
+
+
+# Global ElevenLabs client instance
+elevenlabs_client = ElevenLabsClient()
+
+
 class UltravoxClient:
     """Client for Ultravox API"""
     
     def __init__(self):
-        self.base_url = settings.ULTRAVOX_BASE_URL
+        # Normalize base URL: remove trailing /v1 if present (endpoints include /api prefix)
+        base_url = settings.ULTRAVOX_BASE_URL.rstrip("/")
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3]  # Remove /v1 suffix
+            logger.warning(f"⚠️  ULTRAVOX_BASE_URL contained /v1 suffix, normalized to: {base_url}")
+        self.base_url = base_url
         self.api_key = settings.ULTRAVOX_API_KEY
         if not self.api_key:
             logger.warning("⚠️  ULTRAVOX_API_KEY is not set. Ultravox features will be disabled.")
@@ -23,7 +164,7 @@ class UltravoxClient:
         else:
             logger.info(f"✅ Ultravox client initialized with base URL: {self.base_url}")
         self.headers = {
-            "Authorization": f"Bearer {self.api_key}" if self.api_key else "",
+            "X-API-Key": self.api_key if self.api_key else "",
             "Content-Type": "application/json",
         }
     
@@ -43,12 +184,12 @@ class UltravoxClient:
             )
         
         url = f"{self.base_url}{endpoint}"
-        logger.info(f"Ultravox API Request: {method} {url}")
+        logger.info(f"[ULTRAVOX] Making request | method={method} | url={url} | params={params}")
         if data:
-            logger.debug(f"Ultravox Request Data: {data}")
+            logger.debug(f"[ULTRAVOX] Request Data: {data}")
         
         async def _make_request():
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 response = await client.request(
                     method,
                     url,
@@ -56,9 +197,11 @@ class UltravoxClient:
                     params=params,
                     headers=self.headers,
                 )
-                logger.debug(f"Ultravox API Response: {response.status_code} for {url}")
+                logger.debug(f"[ULTRAVOX] Response received | status_code={response.status_code} | url={url}")
                 if response.status_code >= 400:
-                    logger.error(f"Ultravox API Error Response: Status {response.status_code}, URL: {url}, Headers: {dict(response.headers)}")
+                    # Log full error details for debugging
+                    error_text = response.text[:500] if response.text else "No response body"
+                    logger.error(f"[ULTRAVOX] Error Response | status={response.status_code} | url={url} | response_preview={error_text}")
                 response.raise_for_status()
                 return response.json()
         
@@ -69,6 +212,7 @@ class UltravoxClient:
             error_detail = "Unknown error"
             error_details = {}
             try:
+                # Try to parse as JSON first
                 error_body = e.response.json()
                 if isinstance(error_body, dict):
                     error_detail = error_body.get("error", {}).get("message", str(e)) if isinstance(error_body.get("error"), dict) else str(e)
@@ -78,41 +222,81 @@ class UltravoxClient:
                     error_detail = str(e)
                     error_details = {"raw_response": str(error_body)}
             except:
-                error_detail = e.response.text or str(e)
-                error_details = {"raw_response": error_detail}
+                # Not JSON, likely HTML error page (like 404 Not Found page)
+                error_text = e.response.text[:1000] if e.response.text else "No response body"
+                error_detail = f"HTTP {e.response.status_code}: {error_text[:200]}"
+                error_details = {
+                    "status_code": e.response.status_code,
+                    "response_body": error_text,
+                    "request_url": str(e.request.url),
+                    "method": e.request.method,
+                }
             
-            logger.error(f"Ultravox API error {e.response.status_code} for {method} {endpoint}: {error_detail}")
+            logger.error(f"[ULTRAVOX] HTTP Status Error: {e.response.status_code} - {error_detail[:200]} | url={url}", exc_info=True)
             raise ProviderError(
                 provider="ultravox",
-                message=f"Ultravox API error: {e.response.status_code} - {error_detail}",
+                message=f"Ultravox API error: {e.response.status_code} - {error_detail[:200]}",
                 http_status=e.response.status_code,
                 retry_after=int(e.response.headers.get("Retry-After", 0)) if e.response.status_code == 429 else None,
                 details=error_details,
             )
         except httpx.RequestError as e:
+            logger.error(f"[ULTRAVOX] Request Error: {e} | url={url}", exc_info=True)
             raise ProviderError(
                 provider="ultravox",
-                message=f"Failed to connect to Ultravox: {str(e)}",
+                message=f"Ultravox API request failed: {e}",
                 http_status=502,
+                details={
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "request_url": url,
+                    "method": method,
+                },
             )
     
     # Voices
-    async def list_voices(self) -> List[Dict[str, Any]]:
+    async def list_voices(self, ownership: Optional[str] = None, provider: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """List all voices from Ultravox with provider-specific IDs"""
-        response = await self._request("GET", "/voices")
-        voices = response.get("data", [])
-        # Ensure each voice includes provider-specific identifiers
+        params = {}
+        if ownership:
+            params["ownership"] = ownership
+        if provider:
+            params["provider"] = provider
+        
+        # Use /api/voices endpoint per Ultravox API documentation
+        # Full URL should be: https://api.ultravox.ai/api/voices
+        response = await self._request("GET", "/api/voices", params=params)
+        
+        voices = response.get("results", [])  # Fixed: use "results" not "data" per Ultravox API docs
+        
+        # Extract provider_voice_id from definition object (per Ultravox API structure)
+        processed_count = 0
         for voice in voices:
-            # Extract provider_voice_id from externalVoice if present
-            if "externalVoice" in voice:
-                external_voice = voice["externalVoice"]
-                for provider in ["elevenLabs", "openai", "google", "cartesia", "lmnt", "generic"]:
-                    if provider in external_voice:
-                        provider_data = external_voice[provider]
-                        if "voiceId" in provider_data:
-                            voice["provider_voice_id"] = provider_data["voiceId"]
-                            voice["provider"] = provider
-                            break
+            definition = voice.get("definition", {})
+            provider_name = voice.get("provider", "").lower()
+            
+            # Extract provider_voice_id based on provider type from definition
+            if "elevenLabs" in definition:
+                voice["provider_voice_id"] = definition["elevenLabs"].get("voiceId")
+                voice["provider"] = "elevenlabs"
+            elif "cartesia" in definition:
+                voice["provider_voice_id"] = definition["cartesia"].get("voiceId")
+                voice["provider"] = "cartesia"
+            elif "lmnt" in definition:
+                voice["provider_voice_id"] = definition["lmnt"].get("voiceId")
+                voice["provider"] = "lmnt"
+            elif "google" in definition:
+                voice["provider_voice_id"] = definition["google"].get("voiceId")
+                voice["provider"] = "google"
+            elif "generic" in definition:
+                # Generic voices don't have a provider_voice_id
+                voice["provider"] = "generic"
+            else:
+                # Fallback to provider field if no definition match
+                if not voice.get("provider"):
+                    voice["provider"] = provider_name or "unknown"
+            processed_count += 1
+        
         return voices
     
     def reconcile_resource(
@@ -187,47 +371,212 @@ class UltravoxClient:
         return drift
     
     async def create_voice(self, voice_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create voice in Ultravox"""
-        response = await self._request("POST", "/voices", data=voice_data)
-        return response.get("data", {})
+        """Create voice in Ultravox (legacy - use import_voice_from_provider instead)"""
+        response = await self._request("POST", "/api/voices", data=voice_data)
+        return response
+    
+    async def import_voice_from_provider(
+        self,
+        name: str,
+        provider: str,
+        provider_voice_id: str,
+        description: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Import a voice from an external provider into Ultravox.
+        
+        This uses the correct Ultravox API format with provider-specific definitions.
+        Voice names are lowercased with underscores (no spaces).
+        
+        Args:
+            name: Display name for the voice
+            provider: Provider name (elevenlabs, cartesia, lmnt, google)
+            provider_voice_id: The voice ID from the provider
+            description: Optional description
+        
+        Returns:
+            Ultravox voice response with voiceId
+        """
+        # Normalize name: lowercase, replace spaces with underscores
+        normalized_name = name.lower().replace(" ", "_").replace("-", "_")
+        # Remove any non-alphanumeric characters except underscores
+        normalized_name = "".join(c if c.isalnum() or c == "_" else "" for c in normalized_name)
+        
+        logger.info(f"[ULTRAVOX] Importing voice from provider | name={normalized_name} | provider={provider} | provider_voice_id={provider_voice_id}")
+        
+        # Build provider-specific definition
+        voice_data: Dict[str, Any] = {
+            "name": normalized_name,
+        }
+        
+        if description:
+            voice_data["description"] = description
+        
+        # Provider-specific definitions per Ultravox API
+        if provider == "elevenlabs":
+            voice_data["definition"] = {
+                "elevenLabs": {
+                    "voiceId": provider_voice_id,
+                    "model": "eleven_multilingual_v2",
+                    "stability": 0.5,
+                    "similarityBoost": 0.75,
+                    "style": 0.0,
+                    "useSpeakerBoost": True,
+                    "speed": 1.0,
+                }
+            }
+        elif provider == "cartesia":
+            voice_data["definition"] = {
+                "cartesia": {
+                    "voiceId": provider_voice_id,
+                    "model": "sonic-english",
+                    "generationConfig": {
+                        "speed": 1.0,
+                        "emotion": "positivity:high",
+                    }
+                }
+            }
+        elif provider == "lmnt":
+            voice_data["definition"] = {
+                "lmnt": {
+                    "voiceId": provider_voice_id,
+                    "model": "lily",
+                    "speed": 1.0,
+                    "conversational": True,
+                }
+            }
+        elif provider == "google":
+            voice_data["definition"] = {
+                "google": {
+                    "voiceId": provider_voice_id,
+                    "speakingRate": 1.0,
+                }
+            }
+        else:
+            raise ProviderError(
+                provider="ultravox",
+                message=f"Unsupported provider: {provider}. Supported: elevenlabs, cartesia, lmnt, google",
+                http_status=400,
+            )
+        
+        logger.debug(f"[ULTRAVOX] Voice import payload: {voice_data}")
+        
+        response = await self._request("POST", "/api/voices", data=voice_data)
+        
+        ultravox_voice_id = response.get("voiceId") or response.get("id")
+        logger.info(f"[ULTRAVOX] Voice imported successfully | ultravox_voice_id={ultravox_voice_id} | provider={provider}")
+        
+        return response
     
     async def get_voice(self, voice_id: str) -> Dict[str, Any]:
         """Get voice from Ultravox"""
-        response = await self._request("GET", f"/voices/{voice_id}")
-        return response.get("data", {})
+        response = await self._request("GET", f"/api/voices/{voice_id}")
+        return response
+    
+    async def get_voice_preview(self, voice_id: str) -> bytes:
+        """Get voice preview audio from Ultravox - returns raw audio bytes (audio/wav)"""
+        if not self.api_key:
+            raise ProviderError(
+                provider="ultravox",
+                message="Ultravox API key is not configured",
+                http_status=500,
+            )
+        
+        url = f"{self.base_url}/api/voices/{voice_id}/preview"
+        logger.info(f"[ULTRAVOX] Getting voice preview | voice_id={voice_id} | url={url}")
+        
+        async def _make_request():
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                response = await client.get(
+                    url,
+                    headers={
+                        "X-API-Key": self.api_key,
+                    },
+                )
+                logger.debug(f"[ULTRAVOX] Preview response received | status_code={response.status_code} | url={url}")
+                if response.status_code >= 400:
+                    error_text = response.text[:500] if response.text else "No response body"
+                    logger.error(f"[ULTRAVOX] Preview Error Response | status={response.status_code} | url={url} | response_preview={error_text}")
+                response.raise_for_status()
+                return response.content  # Return raw bytes, not JSON
+        
+        try:
+            return await retry_with_backoff(_make_request)
+        except httpx.HTTPStatusError as e:
+            error_detail = "Unknown error"
+            error_details = {}
+            try:
+                error_body = e.response.json()
+                if isinstance(error_body, dict):
+                    error_detail = error_body.get("error", {}).get("message", str(e)) if isinstance(error_body.get("error"), dict) else str(e)
+                    error_details = error_body
+                else:
+                    error_detail = str(e)
+                    error_details = {"raw_response": str(error_body)}
+            except:
+                error_text = e.response.text[:1000] if e.response.text else "No response body"
+                error_detail = f"HTTP {e.response.status_code}: {error_text[:200]}"
+                error_details = {
+                    "status_code": e.response.status_code,
+                    "response_body": error_text,
+                    "request_url": str(e.request.url),
+                    "method": e.request.method,
+                }
+            
+            logger.error(f"[ULTRAVOX] Preview HTTP Status Error: {e.response.status_code} - {error_detail[:200]} | url={url}", exc_info=True)
+            raise ProviderError(
+                provider="ultravox",
+                message=f"Ultravox API error: {e.response.status_code} - {error_detail[:200]}",
+                http_status=e.response.status_code,
+                retry_after=int(e.response.headers.get("Retry-After", 0)) if e.response.status_code == 429 else None,
+                details=error_details,
+            )
+        except httpx.RequestError as e:
+            logger.error(f"[ULTRAVOX] Preview Request Error: {e} | url={url}", exc_info=True)
+            raise ProviderError(
+                provider="ultravox",
+                message=f"Ultravox API request failed: {e}",
+                http_status=502,
+                details={
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "request_url": url,
+                    "method": "GET",
+                },
+            )
     
     # Agents
     async def create_agent(self, agent_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create agent in Ultravox"""
-        response = await self._request("POST", "/agents", data=agent_data)
-        return response.get("data", {})
+        response = await self._request("POST", "/api/agents", data=agent_data)
+        return response
     
     async def get_agent(self, agent_id: str) -> Dict[str, Any]:
         """Get agent from Ultravox"""
-        response = await self._request("GET", f"/agents/{agent_id}")
-        return response.get("data", {})
+        response = await self._request("GET", f"/api/agents/{agent_id}")
+        return response
     
     async def update_agent(self, agent_id: str, agent_data: Dict[str, Any]) -> Dict[str, Any]:
         """Update agent in Ultravox"""
-        response = await self._request("PATCH", f"/agents/{agent_id}", data=agent_data)
-        return response.get("data", {})
+        response = await self._request("PATCH", f"/api/agents/{agent_id}", data=agent_data)
+        return response
     
     async def delete_agent(self, agent_id: str, force: bool = False) -> Dict[str, Any]:
         """Delete agent from Ultravox"""
         params = {"force": "true"} if force else {}
-        response = await self._request("DELETE", f"/agents/{agent_id}", params=params)
-        return response.get("data", {})
+        response = await self._request("DELETE", f"/api/agents/{agent_id}", params=params)
+        return response
     
     # Knowledge Bases (Corpora)
     async def create_corpus(self, corpus_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create corpus in Ultravox"""
-        response = await self._request("POST", "/corpora", data=corpus_data)
-        return response.get("data", {})
+        response = await self._request("POST", "/api/corpora", data=corpus_data)
+        return response
     
     async def add_corpus_source(self, corpus_id: str, source_data: Dict[str, Any]) -> Dict[str, Any]:
         """Add source to corpus"""
-        response = await self._request("POST", f"/corpora/{corpus_id}/sources", data=source_data)
-        return response.get("data", {})
+        response = await self._request("POST", f"/api/corpora/{corpus_id}/sources", data=source_data)
+        return response
     
     # Calls
     async def create_call(self, call_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -246,8 +595,8 @@ class UltravoxClient:
                     "secrets": [settings.ULTRAVOX_WEBHOOK_SECRET],
                 }
         
-        response = await self._request("POST", "/calls", data=call_data)
-        return response.get("data", {})
+        response = await self._request("POST", "/api/calls", data=call_data)
+        return response
     
     async def create_test_call(
         self,
@@ -266,23 +615,23 @@ class UltravoxClient:
                 "is_test": True,  # Flag to bypass billing logic
             },
         }
-        response = await self._request("POST", "/calls", data=call_data)
-        return response.get("data", {})
+        response = await self._request("POST", "/api/calls", data=call_data)
+        return response
     
     async def get_call(self, call_id: str) -> Dict[str, Any]:
         """Get call from Ultravox"""
-        response = await self._request("GET", f"/calls/{call_id}")
-        return response.get("data", {})
+        response = await self._request("GET", f"/api/calls/{call_id}")
+        return response
     
-    async def get_call_transcript(self, call_id: str) -> Dict[str, Any]:
-        """Get call transcript"""
-        response = await self._request("GET", f"/calls/{call_id}/transcript")
-        return response.get("data", {})
+    async def get_call_transcript(self, call_id: str) -> List[Dict[str, Any]]:
+        """Get call messages/transcript"""
+        response = await self._request("GET", f"/api/calls/{call_id}/messages")
+        return response.get("results", [])
     
     async def get_call_recording(self, call_id: str) -> str:
         """Get call recording URL"""
-        response = await self._request("GET", f"/calls/{call_id}/recording")
-        return response.get("data", {}).get("url", "")
+        response = await self._request("GET", f"/api/calls/{call_id}/recording")
+        return response.get("recordingUrl", "")
     
     # Campaigns (Batches)
     async def create_scheduled_batch(
@@ -297,25 +646,25 @@ class UltravoxClient:
         """
         response = await self._request(
             "POST",
-            f"/agents/{agent_id}/scheduled-batches",
+            f"/api/agents/{agent_id}/scheduled-batches",
             data=batch_data,
         )
-        return response.get("data", {})
+        return response
     
     async def get_batch(self, agent_id: str, batch_id: str) -> Dict[str, Any]:
         """
         Get batch status from Ultravox.
         Requires agent_id as batches are scoped to agents.
         """
-        # Ultravox API structure: /agents/{agent_id}/scheduled-batches/{batch_id}
-        response = await self._request("GET", f"/agents/{agent_id}/scheduled-batches/{batch_id}")
-        return response.get("data", {})
+        # Ultravox API structure: /api/agents/{agent_id}/scheduled-batches/{batch_id}
+        response = await self._request("GET", f"/api/agents/{agent_id}/scheduled-batches/{batch_id}")
+        return response
     
     # Webhooks
     async def list_webhooks(self) -> List[Dict[str, Any]]:
         """List all webhooks configured in Ultravox"""
-        response = await self._request("GET", "/webhooks")
-        return response.get("data", [])
+        response = await self._request("GET", "/api/webhooks")
+        return response.get("results", [])
     
     async def create_webhook(
         self,
@@ -334,8 +683,8 @@ class UltravoxClient:
         if agent_id:
             webhook_data["agentId"] = agent_id
         
-        response = await self._request("POST", "/webhooks", data=webhook_data)
-        return response.get("data", {})
+        response = await self._request("POST", "/api/webhooks", data=webhook_data)
+        return response
     
     async def update_webhook(
         self,
@@ -353,12 +702,12 @@ class UltravoxClient:
         if secrets is not None:
             webhook_data["secrets"] = secrets
         
-        response = await self._request("PATCH", f"/webhooks/{webhook_id}", data=webhook_data)
-        return response.get("data", {})
+        response = await self._request("PATCH", f"/api/webhooks/{webhook_id}", data=webhook_data)
+        return response
     
     async def delete_webhook(self, webhook_id: str) -> None:
         """Delete a webhook from Ultravox"""
-        await self._request("DELETE", f"/webhooks/{webhook_id}")
+        await self._request("DELETE", f"/api/webhooks/{webhook_id}")
     
     async def ensure_webhook_registration(self) -> Optional[str]:
         """
@@ -375,15 +724,12 @@ class UltravoxClient:
             return None
         
         webhook_url = f"{settings.WEBHOOK_BASE_URL}/api/v1/webhooks/ultravox"
+        # Valid Ultravox webhook events per API documentation
         required_events = [
-            "call.started",
-            "call.ended",
-            "call.completed",
-            "call.failed",
-            "batch.status.changed",
-            "batch.completed",
-            "voice.training.completed",
-            "voice.training.failed",
+            "call.started",   # Fired when a call starts
+            "call.joined",    # Fired when a call is joined
+            "call.ended",     # Fired when a call ends
+            "call.billed",    # Fired when a call is billed
         ]
         
         try:
@@ -434,8 +780,8 @@ class UltravoxClient:
     # Tools
     async def create_tool(self, tool_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create tool in Ultravox"""
-        response = await self._request("POST", "/tools", data=tool_data)
-        return response.get("data", {})
+        response = await self._request("POST", "/api/tools", data=tool_data)
+        return response
     
     async def create_durable_tool(
         self,
@@ -479,35 +825,35 @@ class UltravoxClient:
             },
         }
         
-        response = await self._request("POST", "/tools", data=tool_data)
-        return response.get("data", {})
+        response = await self._request("POST", "/api/tools", data=tool_data)
+        return response
     
     async def update_tool(self, tool_id: str, tool_data: Dict[str, Any]) -> Dict[str, Any]:
         """Update tool in Ultravox"""
-        response = await self._request("PATCH", f"/tools/{tool_id}", data=tool_data)
-        return response.get("data", {})
+        response = await self._request("PATCH", f"/api/tools/{tool_id}", data=tool_data)
+        return response
     
     async def delete_tool(self, tool_id: str) -> None:
         """Delete tool from Ultravox"""
-        await self._request("DELETE", f"/tools/{tool_id}")
+        await self._request("DELETE", f"/api/tools/{tool_id}")
     
     # TTS API Keys
     async def update_tts_api_key(self, provider: str, api_key_data: Dict[str, Any]) -> Dict[str, Any]:
         """Update TTS API key for provider"""
         response = await self._request(
             "PATCH",
-            "/accounts/me/tts-api-keys",
+            "/api/accounts/me/tts_api_keys",
             data={"provider": provider, **api_key_data},
         )
-        return response.get("data", {})
+        return response
     
     # SIP/Telephony
     async def get_sip_config(self) -> Dict[str, Any]:
         """Get SIP configuration from Ultravox"""
-        response = await self._request("GET", "/sip/config")
-        return response.get("data", {})
+        response = await self._request("GET", "/api/sip")
+        return response
 
 
-# Global client instance
+# Global client instances
 ultravox_client = UltravoxClient()
 

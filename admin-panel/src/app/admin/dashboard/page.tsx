@@ -66,13 +66,18 @@ export default function DashboardPage() {
       if (clientsWithTiers) {
         for (const client of clientsWithTiers) {
           if (client.subscription_tier_id) {
-            const { data: tier } = await supabaseAdmin
+            const { data: tier, error: tierError } = await supabaseAdmin
               .from('subscription_tiers')
               .select('name')
               .eq('id', client.subscription_tier_id)
-              .single()
+              .maybeSingle()
 
-            if (tier) {
+            if (tierError) {
+              console.error('Error fetching tier:', tierError)
+              continue
+            }
+
+            if (tier?.name) {
               tierDistribution[tier.name] = (tierDistribution[tier.name] || 0) + 1
             }
           }

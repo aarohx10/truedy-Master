@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useCallback } from 'react'
 import { AppLayout } from '@/components/layout/app-layout'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -48,12 +48,12 @@ import {
   AlertCircle,
   Loader2
 } from 'lucide-react'
-import { useVoices, useDeleteVoice, useCreateVoice } from '@/hooks/use-voices'
-import { useQueryClient } from '@tanstack/react-query'
+import { useExploreVoices, useMyVoices, useDeleteVoice, useCreateVoice } from '@/hooks/use-voices'
 import { useToast } from '@/hooks/use-toast'
 import { Voice } from '@/types'
 import { useAuthClient } from '@/lib/clerk-auth-client'
 import { apiClient, endpoints } from '@/lib/api'
+import { logger } from '@/lib/logger'
 
 
 // Community voices library - empty until backend endpoint is implemented
@@ -62,80 +62,82 @@ const mockVoices: any[] = []
 import { VoiceListItemSkeleton } from '@/components/ui/list-skeleton'
 
 export default function VoiceCloningPage() {
-  const queryClient = useQueryClient()
   const { toast } = useToast()
   const { isLoading: authLoading, clientId } = useAuthClient() // Initialize auth
-  const { data: apiVoices, isLoading: voicesLoading, error, isFetching, isFetched } = useVoices()
+  const { data: exploreVoices, isLoading: exploreLoading, error: exploreError, isFetching: exploreFetching, isFetched: exploreFetched } = useExploreVoices()
+  const { data: myVoices, isLoading: myVoicesLoading, error: myVoicesError, isFetching: myVoicesFetching, isFetched: myVoicesFetched } = useMyVoices()
   const deleteVoiceMutation = useDeleteVoice()
   const createVoiceMutation = useCreateVoice()
   const [activeTab, setActiveTab] = useState('explore')
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState('')
-  const [filterCount, setFilterCount] = useState(0)
   const [createVoiceDialogOpen, setCreateVoiceDialogOpen] = useState(false)
   const [filtersDialogOpen, setFiltersDialogOpen] = useState(false)
   const [deletingVoiceId, setDeletingVoiceId] = useState<string | null>(null)
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null)
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null)
   
-  // Ensure we have a safe default for apiVoices
-  const safeVoices = apiVoices || []
+  // Ensure we have safe defaults
+  const safeExploreVoices = exploreVoices || []
+  const safeMyVoices = myVoices || []
   
-  // Filter states
-  const [selectedLanguage, setSelectedLanguage] = useState('')
-  const [selectedAccent, setSelectedAccent] = useState('')
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([])
-  const [selectedQuality, setSelectedQuality] = useState('Any')
-  const [selectedGender, setSelectedGender] = useState('Any')
-  const [selectedAge, setSelectedAge] = useState('Any')
-  const [selectedNoticePeriod, setSelectedNoticePeriod] = useState('Any')
-  const [customRates, setCustomRates] = useState('Include')
-  const [liveModerationEnabled, setLiveModerationEnabled] = useState('Include')
-
-  // Optimized real-time polling - only poll when needed
-  useEffect(() => {
-    if (!clientId) return
-    
-    const trainingVoiceIds = safeVoices
-      .filter(voice => voice.status === 'training')
-      .map(voice => voice.id)
-    
-    if (trainingVoiceIds.length === 0) return
-    
-    // Poll every 3 seconds only for training voices
-    const interval = setInterval(() => {
-      queryClient.refetchQueries({ 
-        queryKey: ['voices', clientId],
-        type: 'active' // Only refetch active queries
-      })
-    }, 3000)
-    
-    return () => clearInterval(interval)
-  }, [safeVoices, queryClient, clientId])
-
-  // Memoize filtered voices for explore tab
-  // Note: Community voices (explore tab) are not yet implemented in backend
-  // Using empty array until backend endpoint is available
-  const filteredVoices = useMemo(() => {
-    // TODO: Replace with real API call when community voices endpoint is implemented
-    return []
-  }, [searchQuery])
-
-  // Memoize filtered my voices
-  const filteredMyVoices = useMemo(() => {
-    if (!searchQuery.trim()) return safeVoices
-    const query = searchQuery.toLowerCase()
-    return safeVoices.filter(voice =>
-      voice.name.toLowerCase().includes(query)
-    )
-  }, [safeVoices, searchQuery])
+  // Consolidated filter state
+  const [filters, setFilters] = useState({
+    language: '',
+    accent: '',
+    categories: [] as string[],
+    quality: 'Any',
+    gender: 'Any',
+    age: 'Any',
+    noticePeriod: 'Any',
+    customRates: 'Include',
+    liveModerationEnabled: 'Include',
+  })
   
-  // Improved loading state logic to prevent flickering
-  // Show loading skeleton only on true initial load (first time, no cached data)
-  const cachedVoices = queryClient.getQueryData<Voice[]>(['voices', clientId])
-  const hasCachedData = cachedVoices !== undefined && cachedVoices.length >= 0
-  // Only show loading if: auth loading OR no clientId OR (query loading AND no cached data AND not fetched)
-  const isInitialLoading = authLoading || (!clientId && !error) || (voicesLoading && !hasCachedData && !isFetched)
+  // Calculate filter count directly
+  const filterCount = Object.values(filters).filter(v => 
+    v && v !== 'Any' && v !== 'Include' && (Array.isArray(v) ? v.length > 0 : true)
+  ).length
+
+
+  // Simple filter logic - no memoization needed
+  const filteredVoices = safeExploreVoices.filter(voice => {
+    if (searchQuery && !voice.name.toLowerCase().includes(searchQuery.toLowerCase()) && 
+        !voice.description?.toLowerCase().includes(searchQuery.toLowerCase()) &&
+        !voice.provider.toLowerCase().includes(searchQuery.toLowerCase())) return false
+    if (filters.language && voice.language && !voice.language.toLowerCase().includes(filters.language.toLowerCase())) return false
+    if (filters.accent && !voice.description?.toLowerCase().includes(filters.accent.toLowerCase()) && 
+        !voice.name.toLowerCase().includes(filters.accent.toLowerCase())) return false
+    if (filters.categories.length > 0) {
+      const voiceText = `${voice.name} ${voice.description || ''}`.toLowerCase()
+      if (!filters.categories.some(cat => voiceText.includes(cat.toLowerCase()))) return false
+    }
+    if (filters.gender !== 'Any') {
+      const voiceText = `${voice.name} ${voice.description || ''}`.toLowerCase()
+      if (filters.gender === 'Male' && (!voiceText.includes('male') || voiceText.includes('female'))) return false
+      if (filters.gender === 'Female' && !voiceText.includes('female')) return false
+      if (filters.gender === 'Neutral' && (voiceText.includes('male') || voiceText.includes('female'))) return false
+    }
+    if (filters.age !== 'Any') {
+      const voiceText = `${voice.name} ${voice.description || ''}`.toLowerCase()
+      if (filters.age === 'Young' && !voiceText.match(/young|child|teen/)) return false
+      if (filters.age === 'Middle Aged' && !voiceText.match(/middle|adult/)) return false
+      if (filters.age === 'Old' && !voiceText.match(/old|senior|elderly/)) return false
+    }
+    return true
+  })
+
+  const filteredMyVoices = safeMyVoices.filter(voice => {
+    if (searchQuery && !voice.name.toLowerCase().includes(searchQuery.toLowerCase()) && 
+        !voice.provider.toLowerCase().includes(searchQuery.toLowerCase())) return false
+    if (filters.language && voice.language && !voice.language.toLowerCase().includes(filters.language.toLowerCase())) return false
+    return true
+  })
+  
+  // Simple loading and empty state logic
+  const isLoading = authLoading || exploreLoading || myVoicesLoading
+  const showEmpty = activeTab === 'explore' 
+    ? (exploreFetched && !exploreLoading && !exploreError && safeExploreVoices.length === 0)
+    : (myVoicesFetched && !myVoicesLoading && !myVoicesError && safeMyVoices.length === 0)
 
   // Handle delete voice
   const handleDeleteVoice = useCallback(async (voiceId: string, voiceName: string) => {
@@ -143,6 +145,7 @@ export default function VoiceCloningPage() {
       return
     }
     
+    logger.logUserAction('voice_delete_clicked', { voiceId, voiceName })
     setDeletingVoiceId(voiceId)
     try {
       await deleteVoiceMutation.mutateAsync(voiceId)
@@ -163,6 +166,8 @@ export default function VoiceCloningPage() {
 
   // Handle play voice preview
   const handlePlayVoice = useCallback(async (voice: Voice) => {
+    logger.logUserAction('voice_play_clicked', { voiceId: voice.id, voiceName: voice.name })
+    
     // Stop any currently playing audio
     if (audioElement) {
       audioElement.pause()
@@ -176,8 +181,9 @@ export default function VoiceCloningPage() {
       return
     }
 
-    // Check if voice is active and has provider_voice_id
-    if (voice.status !== 'active') {
+    // Check if voice is active (only for custom voices - Ultravox voices don't have status)
+    // For custom voices, check status; for Ultravox voices (no status field), allow preview
+    if (voice.status && voice.status !== 'active') {
       toast({
         title: 'Voice not ready',
         description: 'Voice must be active to preview. Please wait for training to complete.',
@@ -186,40 +192,19 @@ export default function VoiceCloningPage() {
       return
     }
 
-    if (voice.provider !== 'elevenlabs') {
-      toast({
-        title: 'Preview not supported',
-        description: `Voice preview is currently only supported for ElevenLabs voices.`,
-        variant: 'destructive',
-      })
-      return
-    }
-
-    if (!voice.provider_voice_id) {
-      toast({
-        title: 'Voice ID missing',
-        description: 'This voice does not have a provider voice ID. Cannot generate preview.',
-        variant: 'destructive',
-      })
-      return
-    }
-
     setPlayingVoiceId(voice.id)
     
     try {
-      // Generate preview text
-      const previewText = "Hello, this is a preview of this voice. How does it sound?"
-      
       console.log('Playing voice:', {
         voiceId: voice.id,
         voiceName: voice.name,
         provider: voice.provider,
-        providerVoiceId: voice.provider_voice_id,
+        ultravoxVoiceId: voice.ultravox_voice_id,
         status: voice.status
       })
       
-      // Fetch audio from backend
-      const previewUrl = endpoints.voices.preview(voice.id, previewText)
+      // Fetch audio from backend (using Ultravox preview endpoint - no text parameter needed)
+      const previewUrl = endpoints.voices.preview(voice.id)
       console.log('Fetching audio from:', previewUrl)
       
       const audioBlob = await apiClient.getAudioBlob(previewUrl)
@@ -278,19 +263,13 @@ export default function VoiceCloningPage() {
         console.error('Error details:', errorMessage)
         
         // Check for specific error types
-        if (errorMessage.includes('API key') || errorMessage.includes('not found') || errorMessage.includes('missing_api_key')) {
-          errorTitle = 'ElevenLabs API Key Required'
-          errorMessage = 'Please configure your ElevenLabs API key. Set ELEVENLABS_API_KEY in your backend .env file (z-backend/.env) and restart the server.'
-        } else if (errorMessage.includes('provider_voice_id')) {
-          errorTitle = 'Voice ID Missing'
-          errorMessage = 'This voice does not have a provider voice ID. Please recreate the voice with a valid ElevenLabs voice ID.'
-        } else if (errorMessage.includes('401') || errorMessage.includes('Invalid')) {
-          errorTitle = 'Invalid API Key'
-          errorMessage = 'The ElevenLabs API key is invalid. Please check your API key configuration.'
+        if (errorMessage.includes('Ultravox API key') || errorMessage.includes('not configured')) {
+          errorTitle = 'Ultravox Configuration Error'
+          errorMessage = 'Ultravox API key is not configured. Please contact support.'
         } else if (errorMessage.includes('404') || errorMessage.includes('not found')) {
           errorTitle = 'Voice Not Found'
-          errorMessage = 'The voice ID was not found in ElevenLabs. Please verify the voice ID is correct.'
-        } else if (errorMessage.includes('Failed to fetch')) {
+          errorMessage = 'The voice was not found. Please verify the voice ID is correct.'
+        } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network')) {
           errorTitle = 'Network Error'
           errorMessage = 'Failed to connect to the server. Please check your internet connection and try again.'
         }
@@ -330,44 +309,25 @@ export default function VoiceCloningPage() {
     return Math.abs(hash)
   }
 
-  // Update filter count
-  const updateFilterCount = useCallback(() => {
-    let count = 0
-    if (selectedCategory) count++
-    if (selectedCategories.length > 0) count += selectedCategories.length
-    if (selectedLanguage) count++
-    if (selectedAccent) count++
-    if (selectedQuality !== 'Any') count++
-    if (selectedGender !== 'Any') count++
-    if (selectedAge !== 'Any') count++
-    if (selectedNoticePeriod !== 'Any') count++
-    if (customRates !== 'Include') count++
-    if (liveModerationEnabled !== 'Include') count++
-    setFilterCount(count)
-  }, [selectedCategory, selectedCategories, selectedLanguage, selectedAccent, selectedQuality, selectedGender, selectedAge, selectedNoticePeriod, customRates, liveModerationEnabled])
-
   // Reset all filters
   const resetAllFilters = useCallback(() => {
-    setSelectedCategory('')
-    setSelectedLanguage('')
-    setSelectedAccent('')
-    setSelectedCategories([])
-    setSelectedQuality('Any')
-    setSelectedGender('Any')
-    setSelectedAge('Any')
-    setSelectedNoticePeriod('Any')
-    setCustomRates('Include')
-    setLiveModerationEnabled('Include')
-    setFilterCount(0)
+    setFilters({
+      language: '',
+      accent: '',
+      categories: [],
+      quality: 'Any',
+      gender: 'Any',
+      age: 'Any',
+      noticePeriod: 'Any',
+      customRates: 'Include',
+      liveModerationEnabled: 'Include',
+    })
   }, [])
-
-  // Update filter count when filters change
-  useEffect(() => {
-    updateFilterCount()
-  }, [updateFilterCount])
 
   const handleAddVoice = async (voiceData: { name: string; source: 'voice-clone' | 'community-voices'; provider?: string }) => {
     try {
+      logger.logUserAction('voice_added', { voiceName: voiceData.name, source: voiceData.source, provider: voiceData.provider })
+      
       // Voice clone and community voices are now both handled inside the modal
       // This callback is just for closing and refreshing
       
@@ -379,11 +339,7 @@ export default function VoiceCloningPage() {
       // Clear search to show all voices
       setSearchQuery('')
       
-      // Wait a bit before invalidating to ensure backend has processed the request
-      // The mutation's onSuccess already invalidates, so this is just a safety refresh
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['voices', clientId] })
-      }, 500)
+      // Mutation's onSuccess already invalidates queries
     } catch (error) {
       toast({
         title: 'Error',
@@ -401,7 +357,10 @@ export default function VoiceCloningPage() {
           {/* Tabs */}
           <div className="flex items-center gap-6">
             <button
-              onClick={() => setActiveTab('explore')}
+              onClick={() => {
+                logger.logUserAction('voice_tab_changed', { tab: 'explore' })
+                setActiveTab('explore')
+              }}
               className={`flex items-center gap-2 text-sm font-medium pb-1 border-b-2 transition-all duration-200 ${
                 activeTab === 'explore'
                   ? 'border-primary text-primary'
@@ -412,7 +371,10 @@ export default function VoiceCloningPage() {
               Explore
             </button>
             <button
-              onClick={() => setActiveTab('my-voices')}
+              onClick={() => {
+                logger.logUserAction('voice_tab_changed', { tab: 'my-voices' })
+                setActiveTab('my-voices')
+              }}
               className={`flex items-center gap-2 text-sm font-medium pb-1 border-b-2 transition-all duration-200 ${
                 activeTab === 'my-voices'
                   ? 'border-primary text-primary'
@@ -420,12 +382,12 @@ export default function VoiceCloningPage() {
               }`}
             >
               My Voices
-              {!isInitialLoading && safeVoices.length > 0 && (
+              {!isLoading && safeMyVoices.length > 0 && (
                 <span className="ml-1 text-xs bg-gray-200 dark:bg-gray-800 px-1.5 py-0.5 rounded">
-                  {safeVoices.length}
+                  {safeMyVoices.length}
                 </span>
               )}
-              {isFetching && !isInitialLoading && (
+              {activeTab === 'my-voices' && myVoicesFetching && !isLoading && (
                 <Loader2 className="h-3 w-3 animate-spin text-gray-400 ml-1" />
               )}
             </button>
@@ -449,9 +411,10 @@ export default function VoiceCloningPage() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-10 focus:ring-2 focus:ring-primary focus:border-primary"
-            disabled={isInitialLoading}
+            disabled={isLoading}
           />
-          {isFetching && !isInitialLoading && (
+          {((activeTab === 'explore' && exploreFetching && !exploreLoading && filteredVoices.length > 0) || 
+            (activeTab === 'my-voices' && myVoicesFetching && !myVoicesLoading && filteredMyVoices.length > 0)) && (
             <div className="absolute right-3 top-1/2 -translate-y-1/2">
               <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
             </div>
@@ -460,9 +423,6 @@ export default function VoiceCloningPage() {
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
             {activeTab === 'explore' && (
               <>
-                <Button variant="ghost" className="gap-2 hidden sm:flex">
-                  <Plus className="h-4 w-4" />
-                </Button>
                 <Button variant="ghost" className="gap-2 hidden md:flex">
                   <ArrowUpDown className="h-4 w-4" />
                   <span className="hidden lg:inline">Trending</span>
@@ -491,10 +451,13 @@ export default function VoiceCloningPage() {
               </Button>
             )}
             <Button 
-              onClick={() => setCreateVoiceDialogOpen(true)}
+              onClick={() => {
+                logger.logUserAction('voice_create_dialog_opened')
+                setCreateVoiceDialogOpen(true)
+              }}
               size="sm"
               className="bg-primary hover:bg-primary/90 text-white gap-2 flex-shrink-0"
-              disabled={isInitialLoading}
+              disabled={isLoading}
             >
               <Plus className="h-4 w-4" />
               Add Voice
@@ -506,54 +469,96 @@ export default function VoiceCloningPage() {
         {activeTab === 'explore' && (
           <>
             {/* Active Filters */}
-            {(selectedCategory || selectedCategories.length > 0 || selectedLanguage || selectedAccent || selectedQuality !== 'Any' || selectedGender !== 'Any' || selectedAge !== 'Any' || selectedNoticePeriod !== 'Any' || customRates !== 'Include' || liveModerationEnabled !== 'Include') && (
-              <div className="flex items-center gap-3 flex-wrap">
-                {selectedCategory && (
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-gray-900 rounded-md text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">Category</span>
-                    <span className="font-medium text-gray-900 dark:text-white">{selectedCategory}</span>
-                    <button
-                      onClick={() => {
-                        setSelectedCategory('')
-                        setSelectedCategories(selectedCategories.filter(c => c !== selectedCategory))
-                        updateFilterCount()
-                      }}
-                      className="ml-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded p-0.5"
-                    >
+            {filterCount > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Language Chip */}
+                {filters.language && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 dark:bg-primary/20 text-primary rounded-full text-xs font-medium">
+                    <span>Language: {filters.language.toUpperCase()}</span>
+                    <button onClick={() => setFilters({...filters, language: ''})} className="hover:bg-primary/20 rounded-full p-0.5">
                       <X className="h-3 w-3" />
                     </button>
                   </div>
                 )}
-                {selectedCategories.map((category) => (
-                  <div key={category} className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-gray-900 rounded-md text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">Category</span>
-                    <span className="font-medium text-gray-900 dark:text-white">{category}</span>
+                {filters.accent && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 dark:bg-primary/20 text-primary rounded-full text-xs font-medium">
+                    <span>Accent: {filters.accent}</span>
+                    <button onClick={() => setFilters({...filters, accent: ''})} className="hover:bg-primary/20 rounded-full p-0.5">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
+                {filters.gender !== 'Any' && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 dark:bg-primary/20 text-primary rounded-full text-xs font-medium">
+                    <span>Gender: {filters.gender}</span>
+                    <button onClick={() => setFilters({...filters, gender: 'Any'})} className="hover:bg-primary/20 rounded-full p-0.5">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
+                {filters.age !== 'Any' && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 dark:bg-primary/20 text-primary rounded-full text-xs font-medium">
+                    <span>Age: {filters.age}</span>
+                    <button onClick={() => setFilters({...filters, age: 'Any'})} className="hover:bg-primary/20 rounded-full p-0.5">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
+                {filters.categories.map((category) => (
+                  <div key={category} className="flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 dark:bg-primary/20 text-primary rounded-full text-xs font-medium">
+                    <span>{category}</span>
                     <button
-                      onClick={() => {
-                        setSelectedCategories(selectedCategories.filter(c => c !== category))
-                        if (selectedCategory === category) setSelectedCategory('')
-                        updateFilterCount()
-                      }}
-                      className="ml-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded p-0.5"
+                      onClick={() => setFilters({...filters, categories: filters.categories.filter(c => c !== category)})}
+                      className="hover:bg-primary/20 rounded-full p-0.5"
                     >
                       <X className="h-3 w-3" />
                     </button>
                   </div>
                 ))}
+
+                {/* Reset Button */}
                 <button 
-                  className="text-sm text-primary hover:text-primary/80 underline font-medium"
+                  className="text-xs text-primary hover:text-primary/80 underline font-medium ml-1"
                   onClick={resetAllFilters}
                 >
-                  Reset filters
+                  Reset all
                 </button>
               </div>
             )}
 
             {/* Results Header */}
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Results</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Results</h2>
+              {exploreFetching && !exploreLoading && filteredVoices.length > 0 && (
+                <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+              )}
+            </div>
+
+            {/* Error Message */}
+            {exploreError && (
+              <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900 rounded-lg flex items-center gap-3">
+                <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-red-800 dark:text-red-300">Error loading voices</p>
+                  <p className="text-sm text-red-600 dark:text-red-400">
+                    {exploreError instanceof Error ? exploreError.message : 'Failed to load voices'}
+                  </p>
+                  <p className="text-xs text-red-500 dark:text-red-500 mt-1">
+                    {!clientId && 'Client ID not available. Please ensure you are signed in.'}
+                    {clientId && 'Check backend connection and authentication.'}
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Voices List */}
-            {filteredVoices.length === 0 ? (
+            {(activeTab === 'explore' && (exploreLoading || !exploreFetched)) ? (
+              <>
+                {[...Array(8)].map((_, i) => (
+                  <VoiceListItemSkeleton key={`explore-skeleton-${i}`} />
+                ))}
+              </>
+            ) : (activeTab === 'explore' && showEmpty) ? (
               <div className="flex flex-col items-center justify-center py-20">
                 <div className="mb-4 flex justify-center">
                   <div className="h-16 w-16 rounded-full bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
@@ -566,127 +571,68 @@ export default function VoiceCloningPage() {
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-6 text-center max-w-md">
                   {searchQuery 
                     ? 'Try adjusting your search terms to find what you\'re looking for.'
-                    : 'No voices are added right now. Please create or add a voice to get started.'
+                    : 'No voices are available right now. Please try again later.'
                   }
                 </p>
-                {!searchQuery && (
-                  <Button
-                    onClick={() => setCreateVoiceDialogOpen(true)}
-                    className="bg-primary hover:bg-primary/90 text-white gap-2"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Create your first voice
-                  </Button>
-                )}
               </div>
             ) : (
             <div className="space-y-3">
-          {filteredVoices.map((voice) => (
+              {filteredVoices.map((voice) => (
                 <div
                   key={voice.id}
-                  className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-white dark:bg-black border border-gray-200 dark:border-gray-900 rounded-lg hover:bg-primary/5 hover:border-primary/40 transition-all"
+                  className="flex items-center gap-4 p-4 bg-white dark:bg-black border border-gray-200 dark:border-gray-900 rounded-lg hover:bg-primary/5 hover:border-primary/40 transition-all"
                 >
-                  {/* Top Row - Mobile */}
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    {/* Avatar */}
-                    <Avatar className="h-10 w-10 flex-shrink-0">
-                      <AvatarImage src={voice.avatar} alt={voice.name} />
-                      <AvatarFallback className="bg-gradient-to-br from-blue-400 to-purple-500 text-white text-sm">
-                        {voice.name.substring(0, 2).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
+                  {/* Avatar */}
+                  <Avatar className="h-10 w-10 flex-shrink-0">
+                    <AvatarFallback className="bg-gradient-to-br from-blue-400 to-purple-500 text-white text-sm">
+                      {voice.name.substring(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
 
-                    {/* Voice Info */}
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-semibold text-gray-900 dark:text-white truncate">
-                        {voice.name}
-                      </h3>
-                      <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
+                  {/* Voice Info */}
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+                      {voice.name}
+                    </h3>
+                    {voice.description && (
+                      <p className="text-xs text-gray-600 dark:text-gray-400 truncate mt-1">
                         {voice.description}
                       </p>
-                      {/* Mobile: Show language inline */}
-                      <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 mt-1 sm:hidden">
-                        <span>{voice.flag}</span>
-                        <span>{voice.language}</span>
-                        <span>•</span>
-                        <span>{voice.accent}</span>
-                      </div>
-                    </div>
-
-                      {/* Actions - Mobile */}
-                      <div className="flex items-center gap-1 sm:hidden flex-shrink-0">
-                        <button 
-                          onClick={() => handlePlayVoice(voice)}
-                          disabled={playingVoiceId === voice.id && audioElement !== null}
-                          className="h-8 w-8 flex items-center justify-center rounded-full border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {playingVoiceId === voice.id ? (
-                            <Loader2 className="h-4 w-4 text-gray-700 dark:text-gray-300 animate-spin" />
-                          ) : (
-                            <Play className="h-4 w-4 text-gray-700 dark:text-gray-300" />
-                          )}
-                        </button>
-                        <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button className="h-8 w-8 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-900">
-                            <MoreVertical className="h-4 w-4 text-gray-700 dark:text-gray-300" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-                          <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">Add to Agent</DropdownMenuItem>
-                          <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">Clone Voice</DropdownMenuItem>
-                          <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">View Details</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                    )}
+                    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-500 mt-1">
+                      <Badge variant="secondary" className="text-xs">
+                        {voice.provider}
+                      </Badge>
+                      <span>{voice.language}</span>
+                      <span>•</span>
+                      <span>{voice.type === 'custom' ? 'Custom' : 'Reference'}</span>
                     </div>
                   </div>
 
-                  {/* Desktop/Tablet Additional Info */}
-                  <div className="hidden sm:flex items-center gap-4 flex-shrink-0">
-                    {/* Language */}
-                    <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 min-w-[140px]">
-                      <span className="text-lg">{voice.flag}</span>
-                      <div>
-                        <div className="font-medium">
-                          {voice.language} {voice.variant && <span className="text-gray-500 dark:text-gray-500">{voice.variant}</span>}
-                        </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-500">{voice.accent}</div>
-                      </div>
-                    </div>
-
-                    {/* Category - Hidden on tablet */}
-                    <div className="hidden lg:block text-sm text-gray-700 dark:text-gray-300 min-w-[120px]">
-                      {voice.category}
-                    </div>
-
-                    {/* Age - Hidden on tablet */}
-                    <div className="hidden lg:block text-sm text-gray-600 dark:text-gray-400 min-w-[40px]">
-                      {voice.age}
-                    </div>
-
-                    {/* Usage Count */}
-                    <div className="text-sm font-medium text-gray-900 dark:text-white min-w-[60px] text-right">
-                      {voice.usageCount}
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-2">
-                      <button className="h-8 w-8 flex items-center justify-center rounded-full border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors">
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button 
+                      onClick={() => handlePlayVoice(voice)}
+                      disabled={playingVoiceId === voice.id && audioElement !== null}
+                      className="h-8 w-8 flex items-center justify-center rounded-full border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {playingVoiceId === voice.id ? (
+                        <Loader2 className="h-4 w-4 text-gray-700 dark:text-gray-300 animate-spin" />
+                      ) : (
                         <Play className="h-4 w-4 text-gray-700 dark:text-gray-300" />
-                      </button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button className="h-8 w-8 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-900">
-                            <MoreVertical className="h-4 w-4 text-gray-700 dark:text-gray-300" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-                          <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">Add to Agent</DropdownMenuItem>
-                          <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">Clone Voice</DropdownMenuItem>
-                          <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">View Details</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
+                      )}
+                    </button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button className="h-8 w-8 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-900">
+                          <MoreVertical className="h-4 w-4 text-gray-700 dark:text-gray-300" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="bg-white dark:bg-black border-gray-200 dark:border-gray-900">
+                        <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">Add to Agent</DropdownMenuItem>
+                        <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">View Details</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </div>
               ))}
@@ -700,19 +646,21 @@ export default function VoiceCloningPage() {
           <>
             <div className="flex items-center gap-2">
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white">My Voices</h2>
-              {isFetching && !isInitialLoading && (
+              {myVoicesFetching && !myVoicesLoading && filteredMyVoices.length > 0 && (
                 <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
               )}
             </div>
             
             {/* Error Message */}
-            {error && (
+            {(exploreError || myVoicesError) && (
               <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900 rounded-lg flex items-center gap-3">
                 <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
                 <div className="flex-1">
                   <p className="text-sm font-medium text-red-800 dark:text-red-300">Error loading voices</p>
                   <p className="text-sm text-red-600 dark:text-red-400">
-                    {error instanceof Error ? error.message : 'Failed to load voices'}
+                    {activeTab === 'explore' && exploreError instanceof Error ? exploreError.message : 
+                     activeTab === 'my-voices' && myVoicesError instanceof Error ? myVoicesError.message : 
+                     'Failed to load voices'}
                   </p>
                   <p className="text-xs text-red-500 dark:text-red-500 mt-1">
                     {!clientId && 'Client ID not available. Please ensure you are signed in.'}
@@ -722,7 +670,7 @@ export default function VoiceCloningPage() {
               </div>
             )}
 
-            {isInitialLoading ? (
+            {(activeTab === 'my-voices' && (myVoicesLoading || !myVoicesFetched)) ? (
               <>
                 {[...Array(5)].map((_, i) => (
                   <VoiceListItemSkeleton key={`skeleton-${i}`} />
@@ -738,7 +686,7 @@ export default function VoiceCloningPage() {
                   Please sign in to view your voices.
                 </p>
               </div>
-            ) : filteredMyVoices.length === 0 ? (
+            ) : (activeTab === 'my-voices' && showEmpty) ? (
               /* Empty State */
               <div className="flex flex-col items-center justify-center py-20">
                 <div className="mb-4 flex justify-center">
@@ -930,8 +878,7 @@ export default function VoiceCloningPage() {
           isOpen={createVoiceDialogOpen}
           onClose={() => {
             setCreateVoiceDialogOpen(false)
-            // Refresh voices when modal closes (in case a voice was created)
-            queryClient.invalidateQueries({ queryKey: ['voices'] })
+            // Mutation's onSuccess already invalidates queries
           }}
           onSave={handleAddVoice}
         />
@@ -952,21 +899,24 @@ export default function VoiceCloningPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-gray-900 dark:text-white">Languages</label>
-                  <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
+                  <Select value={filters.language} onValueChange={(v) => setFilters({...filters, language: v})}>
                     <SelectTrigger>
                       <SelectValue placeholder="Choose languages" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="english">English</SelectItem>
-                      <SelectItem value="spanish">Spanish</SelectItem>
-                      <SelectItem value="french">French</SelectItem>
-                      <SelectItem value="german">German</SelectItem>
+                      <SelectItem value="en">English</SelectItem>
+                      <SelectItem value="es">Spanish</SelectItem>
+                      <SelectItem value="fr">French</SelectItem>
+                      <SelectItem value="de">German</SelectItem>
+                      <SelectItem value="it">Italian</SelectItem>
+                      <SelectItem value="pt">Portuguese</SelectItem>
+                      <SelectItem value="hi">Hindi</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-gray-900 dark:text-white">Accent</label>
-                  <Select value={selectedAccent} onValueChange={setSelectedAccent}>
+                  <Select value={filters.accent} onValueChange={(v) => setFilters({...filters, accent: v})}>
                     <SelectTrigger>
                       <SelectValue placeholder="Choose accent" />
                     </SelectTrigger>
@@ -988,16 +938,14 @@ export default function VoiceCloningPage() {
                     <button
                       key={category}
                       onClick={() => {
-                        if (selectedCategories.includes(category)) {
-                          setSelectedCategories(selectedCategories.filter(c => c !== category))
+                        if (filters.categories.includes(category)) {
+                          setFilters({...filters, categories: filters.categories.filter(c => c !== category)})
                         } else {
-                          setSelectedCategories([...selectedCategories, category])
+                          setFilters({...filters, categories: [...filters.categories, category]})
                         }
-                        // Update filter count after category change
-                        setTimeout(() => updateFilterCount(), 0)
                       }}
                       className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                        selectedCategories.includes(category)
+                        filters.categories.includes(category)
                           ? 'bg-primary text-white'
                           : 'bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white hover:bg-primary/10'
                       }`}
@@ -1013,9 +961,9 @@ export default function VoiceCloningPage() {
                 <label className="text-sm font-medium text-gray-900 dark:text-white">Quality</label>
                 <div className="grid grid-cols-2 gap-3">
                   <button
-                    onClick={() => setSelectedQuality('Any')}
+                    onClick={() => setFilters({...filters, quality: 'Any'})}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      selectedQuality === 'Any'
+                      filters.quality === 'Any'
                         ? 'bg-primary text-white'
                         : 'bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white hover:bg-primary/10'
                     }`}
@@ -1023,9 +971,9 @@ export default function VoiceCloningPage() {
                     Any
                   </button>
                   <button
-                    onClick={() => setSelectedQuality('High-Quality')}
+                    onClick={() => setFilters({...filters, quality: 'High-Quality'})}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      selectedQuality === 'High-Quality'
+                      filters.quality === 'High-Quality'
                         ? 'bg-primary text-white'
                         : 'bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white hover:bg-primary/10'
                     }`}
@@ -1042,9 +990,9 @@ export default function VoiceCloningPage() {
                   {['Any', 'Male', 'Female', 'Neutral'].map((gender) => (
                     <button
                       key={gender}
-                      onClick={() => setSelectedGender(gender)}
+                      onClick={() => setFilters({...filters, gender})}
                       className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        selectedGender === gender
+                        filters.gender === gender
                           ? 'bg-gray-900 dark:bg-white text-white dark:text-black'
                           : 'bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-gray-800'
                       }`}
@@ -1064,9 +1012,9 @@ export default function VoiceCloningPage() {
                   {['Any', 'Young', 'Middle Aged', 'Old'].map((age) => (
                     <button
                       key={age}
-                      onClick={() => setSelectedAge(age)}
+                      onClick={() => setFilters({...filters, age})}
                       className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        selectedAge === age
+                        filters.age === age
                           ? 'bg-gray-900 dark:bg-white text-white dark:text-black'
                           : 'bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-gray-800'
                       }`}
@@ -1086,7 +1034,7 @@ export default function VoiceCloningPage() {
                       key={period}
                       onClick={() => setSelectedNoticePeriod(period)}
                       className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        selectedNoticePeriod === period
+                        filters.noticePeriod === period
                           ? 'bg-gray-900 dark:bg-white text-white dark:text-black'
                           : 'bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-gray-800'
                       }`}
@@ -1102,9 +1050,9 @@ export default function VoiceCloningPage() {
                 <label className="text-sm font-medium text-gray-900 dark:text-white">Custom rates</label>
                 <div className="grid grid-cols-2 gap-3">
                   <button
-                    onClick={() => setCustomRates('Include')}
+                    onClick={() => setFilters({...filters, customRates: 'Include'})}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      customRates === 'Include'
+                      filters.customRates === 'Include'
                         ? 'bg-primary text-white'
                         : 'bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white hover:bg-primary/10'
                     }`}
@@ -1112,9 +1060,9 @@ export default function VoiceCloningPage() {
                     Include
                   </button>
                   <button
-                    onClick={() => setCustomRates('Exclude')}
+                    onClick={() => setFilters({...filters, customRates: 'Exclude'})}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      customRates === 'Exclude'
+                      filters.customRates === 'Exclude'
                         ? 'bg-primary text-white'
                         : 'bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white hover:bg-primary/10'
                     }`}
@@ -1129,9 +1077,9 @@ export default function VoiceCloningPage() {
                 <label className="text-sm font-medium text-gray-900 dark:text-white">Live moderation enabled</label>
                 <div className="grid grid-cols-2 gap-3">
                   <button
-                    onClick={() => setLiveModerationEnabled('Include')}
+                    onClick={() => setFilters({...filters, liveModerationEnabled: 'Include'})}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      liveModerationEnabled === 'Include'
+                      filters.liveModerationEnabled === 'Include'
                         ? 'bg-primary text-white'
                         : 'bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white hover:bg-primary/10'
                     }`}
@@ -1139,9 +1087,9 @@ export default function VoiceCloningPage() {
                     Include
                   </button>
                   <button
-                    onClick={() => setLiveModerationEnabled('Exclude')}
+                    onClick={() => setFilters({...filters, liveModerationEnabled: 'Exclude'})}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      liveModerationEnabled === 'Exclude'
+                      filters.liveModerationEnabled === 'Exclude'
                         ? 'bg-primary text-white'
                         : 'bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white hover:bg-primary/10'
                     }`}
@@ -1165,11 +1113,6 @@ export default function VoiceCloningPage() {
                 <Button 
                 className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30"
                 onClick={() => {
-                  // Update selectedCategory from selectedCategories for display
-                  if (selectedCategories.length > 0 && !selectedCategory) {
-                    setSelectedCategory(selectedCategories[0])
-                  }
-                  updateFilterCount()
                   setFiltersDialogOpen(false)
                 }}
               >

@@ -565,7 +565,7 @@ div[data-radix-popover-content],
   height: 20px;
   background: hsl(217, 100%, 40%);
   border-radius: 0 2px 2px 0;
-  animation: slideInLeft 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  /* No animation - instant appear/disappear */
 }
 
 /* Collapsed sidebar - prevent transform overflow */

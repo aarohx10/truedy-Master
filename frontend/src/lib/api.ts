@@ -1,4 +1,5 @@
 import { QueryClient } from '@tanstack/react-query'
+import { authManager } from './auth-manager'
 
 // Create a client with optimized defaults for instant loading
 export const queryClient = new QueryClient({
@@ -6,7 +7,13 @@ export const queryClient = new QueryClient({
     queries: {
       staleTime: 1000 * 60 * 2, // 2 minutes - data stays fresh longer to reduce API calls
       gcTime: 1000 * 60 * 10, // 10 minutes - keep in cache longer
-      retry: 1, // Only retry once on failure
+      retry: (failureCount, error) => {
+        // Don't retry auth errors
+        if (error instanceof Error && error.message.includes('Session expired')) {
+          return false
+        }
+        return failureCount < 2
+      },
       retryDelay: 1000, // Wait 1 second before retry
       refetchOnWindowFocus: false, // Don't refetch on window focus for better UX
       refetchOnMount: false, // Don't refetch on mount if data is fresh
@@ -68,35 +75,39 @@ export interface BackendError {
 
 import { debugLogger } from './debug-logger'
 
-// API Client
+// API Client - Integrated with AuthManager
 class ApiClient {
   private baseUrl: string
-  private token: string | null = null
-  private clientId: string | null = null
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl
     debugLogger.logStep('API_CLIENT', 'API client initialized', { baseUrl })
   }
 
+  // These methods delegate to authManager but are kept for backward compatibility
   setToken(token: string) {
-    this.token = token
-    debugLogger.logAuth('SET_TOKEN', 'Token set', { tokenLength: token.length })
+    // Token is now managed by authManager
+    // This is called by useAuthClient, which also calls authManager.setAuth
+    debugLogger.logAuth('SET_TOKEN', 'Token set via apiClient (delegating to authManager)', { tokenLength: token.length })
   }
 
   setClientId(clientId: string) {
-    this.clientId = clientId
-    debugLogger.logAuth('SET_CLIENT_ID', 'Client ID set', { clientId })
+    // ClientId is now managed by authManager
+    debugLogger.logAuth('SET_CLIENT_ID', 'Client ID set via apiClient (delegating to authManager)', { clientId })
   }
 
   getClientId(): string | null {
-    return this.clientId
+    return authManager.getClientId()
+  }
+
+  hasToken(): boolean {
+    return authManager.hasToken()
   }
 
   clearToken() {
-    this.token = null
-    this.clientId = null
-    debugLogger.logAuth('CLEAR_TOKEN', 'Token and client ID cleared')
+    // Delegate to authManager
+    authManager.clearAuth()
+    debugLogger.logAuth('CLEAR_TOKEN', 'Token cleared via apiClient')
   }
 
   private generateIdempotencyKey(): string {
@@ -109,15 +120,21 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    retryCount: number = 0
   ): Promise<BackendResponse<T>> {
     const method = options.method || 'GET'
     const url = `${this.baseUrl}${endpoint}`
     const startTime = performance.now()
     
+    // Get current auth state from authManager
+    const token = authManager.getToken()
+    const clientId = authManager.getClientId()
+    
     debugLogger.logRequest(method, endpoint, {
-      hasToken: !!this.token,
-      hasClientId: !!this.clientId,
+      hasToken: !!token,
+      hasClientId: !!clientId,
+      retryCount,
     })
 
     const headers: Record<string, string> = {
@@ -125,18 +142,18 @@ class ApiClient {
       ...(options.headers as Record<string, string>),
     }
 
-    // Add request correlation ID (per .integration file)
+    // Add request correlation ID
     const requestId = options.headers?.['X-Request-Id'] as string || this.generateRequestId()
     headers['X-Request-Id'] = requestId
 
     // Add Authorization header
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
     }
 
     // Add x-client-id header (required by backend for non-agency-admin users)
-    if (this.clientId) {
-      headers['x-client-id'] = this.clientId
+    if (clientId) {
+      headers['x-client-id'] = clientId
     }
 
     // Add idempotency key for POST/PATCH/PUT requests
@@ -154,16 +171,46 @@ class ApiClient {
     } catch (error) {
       // Handle network errors (CORS, connection refused, etc.)
       const errorMessage = error instanceof Error ? error.message : 'Network error'
-      const isCorsError = errorMessage.includes('Failed to fetch') || 
-                        errorMessage.includes('NetworkError') ||
-                        errorMessage.includes('CORS')
+      
+      // Comprehensive CORS error detection
+      const isCorsError = 
+        errorMessage.includes('Failed to fetch') || 
+        errorMessage.includes('NetworkError') ||
+        errorMessage.includes('CORS') ||
+        errorMessage.includes('Cross-Origin') ||
+        errorMessage.includes('blocked by CORS policy') ||
+        errorMessage.includes('No \'Access-Control-Allow-Origin\'') ||
+        errorMessage.includes('ERR_FAILED') ||
+        errorMessage.includes('TypeError: Failed to fetch')
+      
+      // Get current origin for diagnostics
+      const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'unknown'
       
       if (isCorsError) {
+        // Log detailed CORS error info
+        console.error('[CORS ERROR] Request blocked by CORS policy', {
+          url,
+          method,
+          endpoint,
+          currentOrigin,
+          backendUrl: this.baseUrl,
+          errorMessage,
+          suggestion: 'The backend needs to allow this origin in its CORS configuration',
+        })
+        
         debugLogger.logCors(url, false, 'network_error', {
           error: errorMessage,
           method,
           endpoint,
+          origin: currentOrigin,
         })
+        
+        // Provide actionable error message
+        throw new Error(
+          `CORS Error: The backend at ${this.baseUrl} is not allowing requests from ${currentOrigin}. ` +
+          `This is a backend configuration issue. ` +
+          `Please ensure the origin "${currentOrigin}" is added to the backend's CORS allowed origins.`
+        )
       }
       
       debugLogger.logError('API_REQUEST', error instanceof Error ? error : new Error(errorMessage), {
@@ -172,9 +219,6 @@ class ApiClient {
         url,
       })
       
-      if (isCorsError) {
-        throw new Error(`Failed to connect to server. Please check if the backend is running at ${this.baseUrl}`)
-      }
       throw new Error(`Network request failed: ${errorMessage}`)
     }
 
@@ -184,24 +228,37 @@ class ApiClient {
     debugLogger.logResponse(method, endpoint, response.status, durationMs, {
       ok: response.ok,
       hasData: 'data' in responseData,
+      retryCount,
     })
 
     if (!response.ok) {
-      // Handle 401/403 - token expired or unauthorized
-      if (response.status === 401 || response.status === 403) {
-        debugLogger.logAuth('TOKEN_EXPIRED', 'Token expired or unauthorized', {
+      // Handle 401/403 - try to refresh token and retry ONCE
+      if ((response.status === 401 || response.status === 403) && retryCount === 0) {
+        debugLogger.logAuth('TOKEN_EXPIRED', 'Token expired, attempting refresh', {
           status: response.status,
           endpoint,
         })
-        // Clear token and trigger sign-out
-        this.clearToken()
         
-        // Only redirect if we're in the browser (client-side) and not already on signin
-        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/signin')) {
-          // Redirect to sign in
-          window.location.href = '/signin'
+        // Try to refresh the token
+        const freshToken = await authManager.refreshToken()
+        
+        if (freshToken) {
+          debugLogger.logAuth('TOKEN_REFRESHED', 'Token refreshed, retrying request', {
+            endpoint,
+          })
+          // Retry the request with fresh token
+          return this.request<T>(endpoint, options, retryCount + 1)
         }
         
+        // Refresh failed, throw session expired error
+        debugLogger.logAuth('TOKEN_REFRESH_FAILED', 'Token refresh failed', {
+          endpoint,
+        })
+        throw new Error('Session expired. Please sign in again.')
+      }
+      
+      // Already retried or non-auth error
+      if (response.status === 401 || response.status === 403) {
         throw new Error('Session expired. Please sign in again.')
       }
       
@@ -217,6 +274,7 @@ class ApiClient {
         })
         throw new Error(`${errorMessage}${errorDetails}`)
       }
+      
       debugLogger.logError('API_ERROR', new Error(`Request failed with status ${response.status}`), {
         status: response.status,
         endpoint,
@@ -257,18 +315,70 @@ class ApiClient {
     return this.request<T>(endpoint, { method: 'DELETE' })
   }
 
+  /**
+   * Test CORS configuration by calling the backend's CORS test endpoint.
+   * Use this to diagnose CORS issues.
+   * 
+   * @returns CORS diagnostic information
+   */
+  async testCors(): Promise<{
+    status: string
+    cors_working: boolean
+    origin_received: string
+    origin_allowed: boolean
+    exact_origins_count: number
+    wildcard_patterns_count: number
+    message: string
+  }> {
+    const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'unknown'
+    
+    console.log('[CORS TEST] Testing CORS configuration...', {
+      currentOrigin,
+      backendUrl: this.baseUrl,
+    })
+    
+    try {
+      const response = await fetch(`${this.baseUrl}/cors-test`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+      
+      if (!response.ok) {
+        throw new Error(`CORS test failed with status ${response.status}`)
+      }
+      
+      const data = await response.json()
+      console.log('[CORS TEST] Success!', data)
+      return data
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      console.error('[CORS TEST] Failed!', {
+        error: errorMessage,
+        currentOrigin,
+        backendUrl: this.baseUrl,
+        suggestion: `Add "${currentOrigin}" to the backend's CORS allowed origins`,
+      })
+      throw error
+    }
+  }
+
   async getAudioBlob(endpoint: string): Promise<Blob> {
+    const token = authManager.getToken()
+    const clientId = authManager.getClientId()
+    
     const headers: Record<string, string> = {}
 
     // Add request correlation ID
     headers['X-Request-Id'] = this.generateRequestId()
 
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
     }
 
-    if (this.clientId) {
-      headers['x-client-id'] = this.clientId
+    if (clientId) {
+      headers['x-client-id'] = clientId
     }
 
     const url = `${this.baseUrl}${endpoint}`
@@ -283,17 +393,21 @@ class ApiClient {
     console.log('Audio response headers:', Object.fromEntries(response.headers.entries()))
 
     if (!response.ok) {
-      // Handle 401/403 - token expired or unauthorized
+      // Handle 401/403 - try to refresh and retry
       if (response.status === 401 || response.status === 403) {
-        // Clear token and trigger sign-out
-        this.clearToken()
-        
-        // Only sign out if we're in the browser (client-side)
-        if (typeof window !== 'undefined') {
-          // Redirect to sign in
-          window.location.href = '/signin'
+        const freshToken = await authManager.refreshToken()
+        if (freshToken) {
+          // Retry with fresh token
+          headers['Authorization'] = `Bearer ${freshToken}`
+          const retryResponse = await fetch(url, { method: 'GET', headers })
+          if (retryResponse.ok) {
+            const blob = await retryResponse.blob()
+            if (blob.size === 0) {
+              throw new Error('Received empty audio response from server')
+            }
+            return blob
+          }
         }
-        
         throw new Error('Session expired. Please sign in again.')
       }
       
@@ -335,19 +449,23 @@ class ApiClient {
   }
 
   async upload<T>(endpoint: string, formData: FormData): Promise<BackendResponse<T>> {
+    const token = authManager.getToken()
+    const clientId = authManager.getClientId()
+    
     const headers: Record<string, string> = {}
 
     // Add request correlation ID
     headers['X-Request-Id'] = this.generateRequestId()
 
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
     }
 
-    if (this.clientId) {
-      headers['x-client-id'] = this.clientId
+    if (clientId) {
+      headers['x-client-id'] = clientId
     }
 
+    // No timeout needed - backend returns immediately and processes in background
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       method: 'POST',
       headers,
@@ -357,17 +475,22 @@ class ApiClient {
     const responseData = await response.json().catch(() => ({})) as BackendResponse<T> | BackendError
 
     if (!response.ok) {
-      // Handle 401/403 - token expired or unauthorized
+      // Handle 401/403 - try to refresh and retry
       if (response.status === 401 || response.status === 403) {
-        // Clear token and trigger sign-out
-        this.clearToken()
-        
-        // Only sign out if we're in the browser (client-side)
-        if (typeof window !== 'undefined') {
-          // Redirect to sign in
-          window.location.href = '/signin'
+        const freshToken = await authManager.refreshToken()
+        if (freshToken) {
+          // Retry with fresh token
+          headers['Authorization'] = `Bearer ${freshToken}`
+          const retryResponse = await fetch(`${this.baseUrl}${endpoint}`, {
+            method: 'POST',
+            headers,
+            body: formData,
+          })
+          const retryData = await retryResponse.json().catch(() => ({})) as BackendResponse<T> | BackendError
+          if (retryResponse.ok) {
+            return retryData as BackendResponse<T>
+          }
         }
-        
         throw new Error('Session expired. Please sign in again.')
       }
       
@@ -492,4 +615,3 @@ export const endpoints = {
     agents: '/export/agents',
   },
 }
-

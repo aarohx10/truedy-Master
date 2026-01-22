@@ -3,61 +3,38 @@
 import { useAuthClient } from '@/lib/clerk-auth-client'
 import { useAuth } from '@clerk/nextjs'
 import { useEffect } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { usePathname } from 'next/navigation'
+import { logger } from '@/lib/logger'
 
 /**
  * Client component that initializes the API client with authentication
  * This should be included in the app layout to ensure API client is configured
+ * 
+ * NOTE: Route protection is handled by Clerk middleware at the edge level.
+ * This component only handles API client initialization and page view logging.
+ * Do NOT add redirect logic here - it causes race conditions with the middleware.
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { isLoading } = useAuthClient()
-  const { isSignedIn, isLoaded } = useAuth()
-  const router = useRouter()
+  // Initialize the auth client (sets up API token)
+  useAuthClient()
+  const { isLoaded } = useAuth()
   const pathname = usePathname()
-  
-  // Protected routes that require authentication
-  const protectedRoutes = [
-    '/dashboard',
-    '/agents',
-    '/campaigns',
-    '/calls',
-    '/voice-cloning',
-    '/analytics',
-    '/contacts',
-    '/settings',
-    '/billing',
-    '/rag',
-    '/tools',
-    '/phone-numbers',
-    '/conversations',
-  ]
-  
-  const isProtectedRoute = protectedRoutes.some(route => pathname?.startsWith(route))
-  const isAuthRoute = pathname?.startsWith('/signin') || pathname?.startsWith('/signup') || pathname === '/'
 
   useEffect(() => {
-    // Only redirect if we're fully loaded and definitely not signed in
-    // Don't redirect if we're still loading or if there's any uncertainty
-    if (isLoaded && !isLoading && !isSignedIn && isProtectedRoute) {
-      // Prevent redirect loops - only redirect if not already on signin
-      if (pathname !== '/signin' && pathname !== '/signup') {
-        router.push('/signin')
-      }
+    // Log page view
+    if (pathname) {
+      logger.logPageView(pathname)
     }
-  }, [isLoaded, isLoading, isSignedIn, isProtectedRoute, router, pathname])
+  }, [pathname])
 
-  // Show loading state while checking authentication
-  // Don't block rendering if we're just waiting for client_id (not critical)
+  // Show a minimal loading state while Clerk initializes
+  // This prevents flash of content before auth state is known
   if (!isLoaded) {
-    return null // Or return a loading spinner
-  }
-
-  // If on a protected route and not authenticated, don't render children
-  // But only if we're definitely not signed in (not just loading client_id)
-  if (isProtectedRoute && !isSignedIn && !isLoading) {
     return null
   }
 
+  // Always render children - let Clerk middleware handle protection
+  // The middleware runs at edge level and handles redirects properly
   return <>{children}</>
 }
 

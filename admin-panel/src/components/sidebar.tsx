@@ -7,7 +7,7 @@ import {
   DollarSign, 
   Users, 
   LogOut,
-  Settings
+  FileText
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,7 @@ const navigation = [
   { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
   { name: 'Pricing', href: '/admin/pricing', icon: DollarSign },
   { name: 'Clients', href: '/admin/clients', icon: Users },
+  { name: 'Logs', href: '/admin/logs', icon: FileText },
 ]
 
 export function Sidebar() {
