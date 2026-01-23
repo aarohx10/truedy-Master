@@ -3,9 +3,11 @@ import { verifyOTP } from '@/lib/otp'
 import { generateToken } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
+  let email: string | undefined
   try {
     const body = await request.json()
-    const { email, otp } = body
+    email = body?.email
+    const otp = body?.otp
 
     if (!email || !otp) {
       return NextResponse.json(
@@ -38,7 +40,7 @@ export async function POST(request: NextRequest) {
         errorName: rawError.name,
         errorCause: (rawError as any).cause,
         fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
-        email,
+        email: email || 'not provided',
       })
       return NextResponse.json(
         { error: 'Authentication configuration error' },
@@ -66,6 +68,7 @@ export async function POST(request: NextRequest) {
       errorName: rawError.name,
       errorCause: (rawError as any).cause,
       fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      email: email || 'not provided',
     })
     return NextResponse.json(
       { error: 'Internal server error' },

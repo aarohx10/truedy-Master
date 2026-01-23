@@ -3,9 +3,10 @@ import { generateOTP, storeOTP } from '@/lib/otp'
 import { sendOTPEmail } from '@/lib/email'
 
 export async function POST(request: NextRequest) {
+  let email: string | undefined
   try {
     const body = await request.json()
-    const { email } = body
+    email = body?.email
 
     if (!email || typeof email !== 'string' || !email.includes('@')) {
       return NextResponse.json(
@@ -56,7 +57,7 @@ export async function POST(request: NextRequest) {
       errorName: rawError.name,
       errorCause: (rawError as any).cause,
       fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
-      email,
+      email: email || 'not provided',
     })
     return NextResponse.json(
       { error: error?.message || 'Internal server error' },

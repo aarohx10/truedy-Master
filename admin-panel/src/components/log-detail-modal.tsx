@@ -65,7 +65,7 @@ export function LogDetailModal({ log, onClose }: LogDetailModalProps) {
         errorName: rawError.name,
         errorCause: (rawError as any).cause,
         fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
-        logId,
+        logId: log.id,
       })
     }
   }
