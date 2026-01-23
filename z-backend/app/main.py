@@ -167,6 +167,10 @@ cors_middleware_config = {
     "max_age": 86400,  # Cache preflight for 24 hours (reduces OPTIONS requests)
 }
 
+# CRITICAL: Ensure CORS headers are ALWAYS added, even for errors/timeouts
+# This prevents CORS errors when gateway timeouts occur
+cors_middleware_config["allow_origin_regex"] = None  # Will be set below if patterns exist
+
 # Add regex pattern if we have wildcard patterns
 if cors_regex_patterns:
     cors_middleware_config["allow_origin_regex"] = "|".join(cors_regex_patterns)
@@ -175,16 +179,16 @@ if cors_regex_patterns:
 logger.info(f"✅ CORS Exact Origins ({len(settings.CORS_ORIGINS)}): {settings.CORS_ORIGINS[:5]}...")  # Log first 5
 logger.info(f"✅ CORS Wildcard Patterns ({len(settings.CORS_WILDCARD_PATTERNS)}): {settings.CORS_WILDCARD_PATTERNS}")
 
-# Create custom CORS middleware wrapper for detailed logging
+# Create custom CORS middleware wrapper for detailed logging and ALWAYS add CORS headers
 class LoggingCORSMiddleware(StarletteCORSMiddleware):
-    """CORS middleware with detailed logging"""
+    """CORS middleware with detailed logging - ALWAYS adds CORS headers for allowed origins"""
     
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         
-        # Read origin from headers for logging
+        # Read origin from headers
         origin_requested = None
         try:
             headers_list = scope.get("headers", [])
@@ -197,12 +201,33 @@ class LoggingCORSMiddleware(StarletteCORSMiddleware):
         except Exception:
             pass
         
-        # Wrap send to capture response headers for debugging
+        # Wrap send to ALWAYS add CORS headers for allowed origins (even on errors/timeouts)
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
-                # DEBUG: Log response headers (via logger - safe)
+                # CRITICAL: Always add CORS headers if origin is allowed (even for errors/timeouts)
+                if origin_requested and is_origin_allowed(origin_requested):
+                    headers_list = list(message.get("headers", []))
+                    headers_dict = {}
+                    
+                    # Convert headers to dict for easier manipulation
+                    for header in headers_list:
+                        if isinstance(header, (list, tuple)) and len(header) == 2:
+                            key = header[0].decode() if isinstance(header[0], bytes) else header[0]
+                            val = header[1].decode() if isinstance(header[1], bytes) else header[1]
+                            headers_dict[key.lower()] = val
+                    
+                    # Add CORS headers if not already present
+                    if "access-control-allow-origin" not in headers_dict:
+                        headers_list.append((b"access-control-allow-origin", origin_requested.encode()))
+                        headers_list.append((b"access-control-allow-credentials", b"true"))
+                        headers_list.append((b"access-control-allow-methods", b"GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD"))
+                        headers_list.append((b"access-control-allow-headers", b"*"))
+                        headers_list.append((b"access-control-max-age", b"86400"))
+                        message["headers"] = headers_list
+                        logger.info(f"✅ [CORS] Added CORS headers to response | origin={origin_requested} | status={message.get('status')}")
+                
+                # DEBUG: Log response headers
                 try:
-                    # Headers are list of (bytes, bytes) tuples
                     headers_list = message.get("headers", [])
                     headers_dict = {}
                     for header in headers_list:
