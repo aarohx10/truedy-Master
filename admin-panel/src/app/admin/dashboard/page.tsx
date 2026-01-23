@@ -92,7 +92,15 @@ export default function DashboardPage() {
         tierDistribution,
       })
     } catch (error) {
-      console.error('Error loading stats:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ADMIN] [DASHBOARD] Error loading stats (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
     } finally {
       setIsLoading(false)
     }
@@ -110,6 +118,15 @@ export default function DashboardPage() {
 
       setUltravoxStatus(data && data.length > 0 ? 'healthy' : 'unhealthy')
     } catch (error) {
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ADMIN] [DASHBOARD] Error checking Ultravox (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
       setUltravoxStatus('unhealthy')
     }
   }

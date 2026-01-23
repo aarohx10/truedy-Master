@@ -50,7 +50,16 @@ def verify_clerk_webhook(request_body: bytes, svix_id: str, svix_timestamp: str,
         # Compare signatures (constant-time comparison)
         return hmac.compare_digest(signature, expected_signature)
     except Exception as e:
-        logger.error(f"Error verifying Clerk webhook signature: {e}")
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_traceback": traceback.format_exc(),
+        }
+        logger.error(f"[WEBHOOKS] [CLERK] Error verifying webhook signature (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         return False
 
 
@@ -102,7 +111,21 @@ async def handle_clerk_webhook(
         return {"received": True}
         
     except Exception as e:
-        logger.error(f"Error handling Clerk webhook: {e}", exc_info=True)
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+            "error_module": getattr(e, '__module__', None),
+            "error_class": type(e).__name__,
+            "full_traceback": traceback.format_exc(),
+            "event_type": event_type if 'event_type' in locals() else None,
+            "svix_id": svix_id,
+        }
+        logger.error(f"[WEBHOOKS] [CLERK] Error handling webhook (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Webhook processing failed")
 
 
@@ -177,17 +200,36 @@ async def handle_organization_created(admin_db, data: dict):
 
 async def handle_organization_membership_created(admin_db, data: dict):
     """Handle organizationMembership.created event - create user and link to client"""
+    import asyncio
     clerk_user_id = data.get("public_user_data", {}).get("user_id", "")
     clerk_org_id = data.get("organization_id", "")
     role = data.get("role", "org:member")
     
     logger.info(f"Organization membership created: user={clerk_user_id}, org={clerk_org_id}, role={role}")
     
-    # Find client by organization
-    org_client = admin_db.table("clients").select("*").eq("clerk_organization_id", clerk_org_id).execute()
-    if not org_client.data:
-        logger.warning(f"Client not found for org: {clerk_org_id}, creating...")
-        # Create client if doesn't exist
+    # Retry logic to handle race conditions when multiple users join simultaneously
+    max_retries = 3
+    client_id = None
+    
+    for attempt in range(max_retries):
+        # Find client by organization
+        org_client = admin_db.table("clients").select("*").eq("clerk_organization_id", clerk_org_id).execute()
+        
+        if org_client.data:
+            # Client exists - use it
+            client_id = org_client.data[0].get("id")
+            logger.info(f"Found existing client for org: {clerk_org_id}, client_id: {client_id}")
+            break
+        
+        # Client doesn't exist - wait before retrying (exponential backoff)
+        if attempt < max_retries - 1:
+            wait_time = 0.5 * (2 ** attempt)  # 0.5s, 1s, 2s
+            logger.info(f"Client not found for org: {clerk_org_id}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+            await asyncio.sleep(wait_time)
+            continue
+        
+        # Last attempt - create client if still doesn't exist
+        logger.warning(f"Client not found for org: {clerk_org_id} after {max_retries} attempts, creating new client...")
         client_id = str(uuid.uuid4())
         client_data = {
             "id": client_id,
@@ -198,11 +240,38 @@ async def handle_organization_membership_created(admin_db, data: dict):
             "credits_balance": 0,
             "credits_ceiling": 10000,
         }
-        admin_db.table("clients").insert(client_data).execute()
-        # Sync client_id to organization metadata
-        await sync_client_id_to_org_metadata(clerk_org_id, client_id)
-    else:
-        client_id = org_client.data[0].get("id")
+        
+        try:
+            admin_db.table("clients").insert(client_data).execute()
+            logger.info(f"Created new client for org: {clerk_org_id}, client_id: {client_id}")
+            # Sync client_id to organization metadata
+            await sync_client_id_to_org_metadata(clerk_org_id, client_id)
+        except Exception as e:
+            import traceback
+            import json
+            error_details_raw = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "error_args": e.args if hasattr(e, 'args') else None,
+                "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                "full_traceback": traceback.format_exc(),
+                "clerk_org_id": clerk_org_id if 'clerk_org_id' in locals() else None,
+            }
+            logger.error(f"[WEBHOOKS] [CLERK] Error creating client in webhook (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
+            
+            # If insert fails (e.g., duplicate key), try to fetch existing client one more time
+            error_str = str(e)
+            if "23505" in error_str or "duplicate" in error_str.lower() or "unique" in error_str.lower():
+                logger.info(f"Client creation failed (likely race condition), fetching existing client...")
+                org_client = admin_db.table("clients").select("*").eq("clerk_organization_id", clerk_org_id).execute()
+                if org_client.data:
+                    client_id = org_client.data[0].get("id")
+                    logger.info(f"Found existing client after race condition: {client_id}")
+                    break
+            raise e
+    
+    if not client_id:
+        raise ValueError(f"Failed to get or create client for organization: {clerk_org_id}")
     
     # Check if user exists
     user = admin_db.table("users").select("*").eq("clerk_user_id", clerk_user_id).execute()

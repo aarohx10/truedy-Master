@@ -62,11 +62,23 @@ export function AgentForm({ onSuccess, onCancel }: AgentFormProps) {
           onSuccess?.()
         }, 1000)
       } catch (error) {
+        const rawError = error instanceof Error ? error : new Error(String(error))
+        console.error('[AGENT_FORM] Error creating agent (RAW ERROR)', {
+          data,
+          settings,
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          errorName: rawError.name,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        })
+        
         setIsSubmitting(false)
         toast({
           title: 'Error',
-          description: 'Failed to create agent',
+          description: rawError.message || 'Failed to create agent',
           variant: 'destructive',
+          duration: 10000,
         })
       }
     })

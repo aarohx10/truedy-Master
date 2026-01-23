@@ -15,7 +15,6 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { useAppStore } from '@/stores/app-store'
 import { getInitials } from '@/lib/utils'
-import { WorkspaceSwitcher } from '@/components/layout/workspace-switcher'
 import { GlobalSearch } from '@/components/layout/global-search'
 
 export function Header() {
@@ -47,10 +46,6 @@ export function Header() {
           <Menu className="h-5 w-5" />
         </Button>
 
-        {/* Workspace Switcher - Hidden on small mobile */}
-        <div className="hidden sm:block flex-shrink-0">
-          <WorkspaceSwitcher />
-        </div>
 
         {/* Search */}
         <div className="flex-1 max-w-md">

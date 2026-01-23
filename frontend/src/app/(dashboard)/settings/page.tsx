@@ -1,556 +1,509 @@
 'use client'
 
+import { useState, useEffect } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { AppLayout } from '@/components/layout/app-layout'
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { useState, useEffect, useCallback } from 'react'
-import { Camera, User, Users, Mail, UserPlus, Shield, Trash2, RefreshCw } from 'lucide-react'
-import { OrganizationSwitcher } from '@clerk/nextjs'
 import { Input } from '@/components/ui/input'
-import { useOrganizationMembers, useInviteMember } from '@/lib/organizations'
+import { Label } from '@/components/ui/label'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { InviteMemberModal } from '@/components/settings/invite-member-modal'
+import { useOrganizationMembers, useInviteMember } from '@/lib/organizations'
+import { useOrganization, useUser } from '@clerk/nextjs'
+import { useToast } from '@/hooks/use-toast'
+import { Key, CreditCard, Users, Building2, Plus, MoreVertical, Trash2, Shield, Mail, Loader2 } from 'lucide-react'
+import { apiClient, endpoints } from '@/lib/api'
+import { useClientId, useAuthReady } from '@/lib/clerk-auth-client'
+import { useQuery } from '@tanstack/react-query'
 
-interface WorkspaceDeveloper {
+interface TeamMember {
   id: string
+  userId: string
   name: string
   email: string
-  role: 'admin' | 'developer' | 'member'
+  role: 'admin' | 'member' | 'developer'
   avatar?: string
   joinedAt: string
   lastActive?: string
 }
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState('profile')
-  const [profileImage, setProfileImage] = useState<string | null>(null)
-  const [developers, setDevelopers] = useState<WorkspaceDeveloper[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [inviteDialogOpen, setInviteDialogOpen] = useState(false)
-  const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState<'org:admin' | 'org:member'>('org:member')
-  
-  // Use Clerk hooks for organization management
-  const { getMembers, organization } = useOrganizationMembers()
-  const { inviteMember } = useInviteMember()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const activeTabParam = searchParams.get('tab') || 'api-keys'
+  const [activeTab, setActiveTab] = useState(activeTabParam)
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        setProfileImage(reader.result as string)
-      }
-      reader.readAsDataURL(file)
-    }
-  }
-
-  // Fetch organization members from Clerk
-  const fetchDevelopers = useCallback(async () => {
-    if (!organization) {
-      setIsLoading(false)
-      return
-    }
-    
-    try {
-      setIsLoading(true)
-      const members = await getMembers()
-      setDevelopers(members)
-    } catch (error) {
-      console.error('Failed to fetch developers:', error)
-      console.error('Failed to load organization members')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [organization, getMembers])
-
-  // Real-time polling for developers (updates every 5 seconds)
+  // Update active tab when URL changes
   useEffect(() => {
-    if (activeTab === 'workspace') {
-      fetchDevelopers()
-      const interval = setInterval(() => {
-        fetchDevelopers()
-      }, 5000) // Poll every 5 seconds for real-time updates
+    const tab = searchParams.get('tab') || 'api-keys'
+    setActiveTab(tab)
+  }, [searchParams])
 
-      return () => clearInterval(interval)
-    }
-  }, [activeTab, fetchDevelopers])
-
-  const handleInviteDeveloper = async () => {
-    if (!inviteEmail.trim()) return
-
-    try {
-      await inviteMember(inviteEmail, inviteRole)
-      
-      // Invitation sent successfully
-      
-      setInviteEmail('')
-      setInviteDialogOpen(false)
-      
-      // Refresh members list
-      fetchDevelopers()
-    } catch (error: any) {
-      console.error('Failed to invite developer:', error)
-      console.error('Failed to send invitation:', error)
+  const handleTabChange = (value: string) => {
+    setActiveTab(value)
+    if (value === 'billing') {
+      router.push('/billing')
+    } else {
+      router.push(`/settings?tab=${value}`)
     }
   }
+  const [inviteModalOpen, setInviteModalOpen] = useState(false)
+  const { toast } = useToast()
+  const clientId = useClientId()
+  const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { user } = useUser()
+  const { getMembers } = useOrganizationMembers()
 
-  const handleRemoveDeveloper = async (id: string) => {
+  // Fetch team members
+  const { data: teamMembers = [], isLoading: membersLoading, refetch: refetchMembers } = useQuery<TeamMember[]>({
+    queryKey: ['team-members', organization?.id],
+    queryFn: async () => {
+      if (!organization) return []
+      return await getMembers() as TeamMember[]
+    },
+    enabled: !!organization && activeTab === 'team',
+  })
+
+  // Fetch client data for credits
+  const { data: clientData } = useQuery({
+    queryKey: ['client', clientId],
+    queryFn: async () => {
+      const response = await apiClient.get(endpoints.auth.me)
+      return response.data
+    },
+    enabled: isAuthReady && !!clientId && activeTab === 'billing',
+  })
+
+  const creditsBalance = clientData?.credits_balance || 0
+
+  const handleInviteSuccess = () => {
+    refetchMembers()
+  }
+
+  const handleRemoveMember = async (userId: string) => {
     if (!organization) return
     
+    if (!confirm('Are you sure you want to remove this team member?')) {
+      return
+    }
+
     try {
-      // Use Clerk API to remove member
-      await organization.removeMember({ userId: id })
+      await organization.removeMember({ userId })
+      toast({
+        title: 'Member removed',
+        description: 'Team member has been removed successfully.',
+      })
+      refetchMembers()
+    } catch (error) {
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[SETTINGS_PAGE] Error removing member (RAW ERROR)', {
+        memberId,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
       
-      // Member removed successfully
+      toast({
+        title: 'Error removing member',
+        description: rawError.message || 'Failed to remove member',
+        variant: 'destructive',
+        duration: 10000,
+      })
+    }
+  }
+
+  const handleStripePortal = () => {
+    // TODO: Implement Stripe portal redirect
+    toast({
+      title: 'Stripe Portal',
+      description: 'Stripe customer portal will be implemented soon.',
+    })
+  }
+
+  const handleRenameWorkspace = async (newName: string) => {
+    if (!organization) return
+
+    try {
+      await organization.update({ name: newName })
+      toast({
+        title: 'Workspace renamed',
+        description: 'Workspace name has been updated successfully.',
+      })
+    } catch (error) {
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[SETTINGS_PAGE] Error renaming workspace (RAW ERROR)', {
+        newName,
+        organizationId: organization?.id,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
       
-      // Refresh members list
-      fetchDevelopers()
-    } catch (error: any) {
-      console.error('Failed to remove developer:', error)
-      console.error('Failed to remove member:', error)
+      toast({
+        title: 'Error renaming workspace',
+        description: rawError.message || 'Failed to rename workspace',
+        variant: 'destructive',
+        duration: 10000,
+      })
     }
   }
 
   return (
     <AppLayout>
-      <div className="bg-white dark:bg-black xl:-mt-[72px] min-h-screen">
-        <div className="max-w-4xl mx-auto px-6 py-8">
-          {/* Page Header */}
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Settings</h1>
-            <p className="text-sm text-gray-600 dark:text-gray-400">Manage your profile and workspace invites.</p>
-          </div>
+      <div className="max-w-4xl mx-auto px-6 py-8">
+        {/* Page Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Settings</h1>
+          <p className="text-sm text-gray-600 dark:text-gray-400">Manage your workspace configuration and team.</p>
+        </div>
 
-          {/* Tabs */}
-          <div className="border-b border-gray-200 dark:border-gray-900 mb-8">
-            <div className="flex space-x-8">
-              <button
-                onClick={() => setActiveTab('profile')}
-                className={`pb-4 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'profile'
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-primary hover:border-primary/40'
-                }`}
-              >
-                Profile
-              </button>
-              <button
-                onClick={() => setActiveTab('workspace')}
-                className={`pb-4 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'workspace'
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-primary hover:border-primary/40'
-                }`}
-              >
-                Workspace Invites
-              </button>
-            </div>
-          </div>
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+          <TabsList className="grid w-full grid-cols-4 bg-gray-100 dark:bg-gray-900">
+            <TabsTrigger value="api-keys" className="gap-2">
+              <Key className="h-4 w-4" />
+              API Keys
+            </TabsTrigger>
+            <TabsTrigger value="billing" className="gap-2">
+              <CreditCard className="h-4 w-4" />
+              Billing
+            </TabsTrigger>
+            <TabsTrigger value="team" className="gap-2">
+              <Users className="h-4 w-4" />
+              Team
+            </TabsTrigger>
+            <TabsTrigger value="workspace" className="gap-2">
+              <Building2 className="h-4 w-4" />
+              Workspace
+            </TabsTrigger>
+          </TabsList>
 
-          {/* Profile Tab Content */}
-          {activeTab === 'profile' && (
-            <div className="space-y-6">
-              {/* Profile Picture */}
-              <div className="flex items-center justify-between py-4">
-                <div className="flex items-center gap-6">
-                  <div className="relative group">
-                    <div className="h-24 w-24 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden border-2 border-primary/30 hover:border-primary transition-colors">
-                      {profileImage ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={profileImage} alt="Profile" className="h-full w-full object-cover" />
-                      ) : (
-                        <User className="h-12 w-12 text-primary" />
-                      )}
-                    </div>
-                    <label 
-                      htmlFor="profile-upload" 
-                      className="absolute inset-0 flex items-center justify-center bg-primary/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                    >
-                      <Camera className="h-6 w-6 text-white" />
-                    </label>
-                    <input
-                      id="profile-upload"
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleImageUpload}
-                    />
+          {/* API Keys Tab */}
+          <TabsContent value="api-keys" className="space-y-6 mt-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Key className="h-5 w-5" />
+                  API Keys
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="ultravox-key" className="text-sm font-medium text-gray-900 dark:text-white">
+                    Ultravox API Key
+                  </Label>
+                  <Input
+                    id="ultravox-key"
+                    type="password"
+                    placeholder="Enter your Ultravox API key"
+                    className="bg-white dark:bg-black border-gray-300 dark:border-gray-800"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-500">
+                    Used for agent and tool management
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="elevenlabs-key" className="text-sm font-medium text-gray-900 dark:text-white">
+                    ElevenLabs API Key
+                  </Label>
+                  <Input
+                    id="elevenlabs-key"
+                    type="password"
+                    placeholder="Enter your ElevenLabs API key"
+                    className="bg-white dark:bg-black border-gray-300 dark:border-gray-800"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-500">
+                    Used for voice cloning operations
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="webhook-secret" className="text-sm font-medium text-gray-900 dark:text-white">
+                    Webhook Secret
+                  </Label>
+                  <Input
+                    id="webhook-secret"
+                    type="password"
+                    placeholder="Enter your webhook secret"
+                    className="bg-white dark:bg-black border-gray-300 dark:border-gray-800"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-500">
+                    Used to verify webhook requests from external services
+                  </p>
+                </div>
+                <Button className="bg-primary hover:bg-primary/90 text-white">
+                  Save API Keys
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Billing Tab */}
+          <TabsContent value="billing" className="space-y-6 mt-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CreditCard className="h-5 w-5" />
+                  Credits & Billing
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium text-gray-900 dark:text-white">
+                    Credits Remaining
+                  </Label>
+                  <div className="text-3xl font-bold text-gray-900 dark:text-white">
+                    {creditsBalance.toLocaleString()}
                   </div>
-                  <div className="flex-1">
-                    <h3 className="text-base font-semibold text-gray-900 dark:text-white">Profile Picture</h3>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Upload a profile picture (JPG, PNG, or GIF)</p>
-                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-500">
+                    1 Credit = $1.00 USD
+                  </p>
                 </div>
                 <div className="flex gap-2">
-                  <label htmlFor="profile-upload">
-                    <Button variant="outline" className="hover:bg-primary/5 hover:border-primary/40 transition-all" asChild>
-                      <span>Upload Photo</span>
-                    </Button>
-                  </label>
-                  {profileImage && (
-                    <Button 
-                      variant="outline" 
-                      className="bg-red-50 dark:bg-red-950 hover:bg-red-100 dark:hover:bg-red-900 text-red-600 dark:text-red-400 border-red-300 dark:border-red-800"
-                      onClick={() => setProfileImage(null)}
-                    >
-                      Remove
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {/* Email Address */}
-              <div className="flex items-center justify-between py-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">E-Mail Address</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">aarohjain06@gmail.com</p>
-                </div>
-              </div>
-
-              {/* Given Name */}
-              <div className="flex items-center justify-between py-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">Given Name</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Aaroh</p>
-                </div>
-                <Button variant="outline" className="ml-4 shrink-0 hover:bg-primary/5 hover:border-primary/40 transition-all">
-                  Update Given Name
-                </Button>
-              </div>
-
-              {/* Current Plan */}
-              <div className="flex items-center justify-between py-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">Current Plan</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Free</p>
-                </div>
-                <Button variant="outline" className="ml-4 shrink-0 hover:bg-primary/5 hover:border-primary/40 transition-all">
-                  Manage Subscription
-                </Button>
-              </div>
-
-              {/* Default Sharing Preferences */}
-              <div className="flex items-center justify-between py-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">Default Sharing Preferences</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">No default groups selected</p>
-                </div>
-                <Button variant="outline" className="ml-4 shrink-0 hover:bg-primary/5 hover:border-primary/40 transition-all">
-                  Manage Default Sharing
-                </Button>
-              </div>
-
-              {/* Two-Factor Authentication */}
-              <div className="flex items-center justify-between py-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">Two-Factor Authentication</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Disabled</p>
-                </div>
-                <Button variant="outline" className="ml-4 shrink-0 hover:bg-primary/5 hover:border-primary/40 transition-all">
-                  Add Two-Factor Authentication
-                </Button>
-              </div>
-
-              {/* Usage & Credit Ceilings */}
-              <div className="flex items-center justify-between py-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">Usage & Credit Ceilings</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Current credit ceiling usage: 0 / Not set characters</p>
-                </div>
-                <Button variant="outline" className="ml-4 shrink-0 hover:bg-primary/5 hover:border-primary/40 transition-all">
-                  See More Details
-                </Button>
-              </div>
-
-              {/* Application Language */}
-              <div className="flex items-center justify-between py-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">Application language</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">English</p>
-                </div>
-                <div className="ml-4 shrink-0">
-                  <Select defaultValue="en">
-                    <SelectTrigger className="w-[150px] focus:ring-2 focus:ring-primary focus:border-primary">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">🇺🇸</span>
-                        <SelectValue />
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="en">
-                        <div className="flex items-center gap-2">
-                          <span>🇺🇸</span>
-                          <span>English</span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="es">
-                        <div className="flex items-center gap-2">
-                          <span>🇪🇸</span>
-                          <span>Spanish</span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="fr">
-                        <div className="flex items-center gap-2">
-                          <span>🇫🇷</span>
-                          <span>French</span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="de">
-                        <div className="flex items-center gap-2">
-                          <span>🇩🇪</span>
-                          <span>German</span>
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              {/* Sign out of all devices */}
-              <div className="flex items-center justify-between py-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">Sign out of all devices</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Sign out of all devices and sessions. You will need to sign in again on all devices.</p>
-                </div>
-                <Button variant="outline" className="ml-4 shrink-0 hover:bg-primary/5 hover:border-primary/40 transition-all">
-                  Sign out
-                </Button>
-              </div>
-
-              {/* Delete Account */}
-              <div className="flex items-center justify-between py-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-red-600 dark:text-red-400">Delete Account</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Deleting your account is permanent. You will no longer be able to create an account with this email.</p>
-                </div>
-                <Button variant="outline" className="ml-4 shrink-0 bg-red-50 dark:bg-red-950 hover:bg-red-100 dark:hover:bg-red-900 text-red-600 dark:text-red-400 border-red-300 dark:border-red-800">
-                  Delete Account
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Workspace Invites Tab Content */}
-          {activeTab === 'workspace' && (
-            <div className="space-y-8">
-              {/* Organization Switcher */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">Workspace Settings</h2>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    Manage your organization and team members.
-                  </p>
-                </div>
-                <OrganizationSwitcher 
-                  hidePersonal
-                  appearance={{
-                    elements: {
-                      rootBox: "text-sm"
-                    }
-                  }}
-                />
-              </div>
-              
-              {/* Title with Invite Button */}
-              <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-900">
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Team Members</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    Manage team members and their access levels.
-                  </p>
-                </div>
-                {organization && (
-                  <Dialog open={inviteDialogOpen} onOpenChange={setInviteDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button className="gap-2">
-                      <UserPlus className="h-4 w-4" />
-                      Invite Developer
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Invite Developer</DialogTitle>
-                      <DialogDescription>
-                        Invite a developer to join your workspace. They will receive an email invitation.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                      <div>
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
-                          Email Address
-                        </label>
-                        <Input
-                          type="email"
-                          placeholder="developer@example.com"
-                          value={inviteEmail}
-                          onChange={(e) => setInviteEmail(e.target.value)}
-                          className="w-full"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
-                          Role
-                        </label>
-                        <Select value={inviteRole} onValueChange={(value) => setInviteRole(value as 'org:admin' | 'org:member')}>
-                          <SelectTrigger className="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="org:admin">Admin</SelectItem>
-                            <SelectItem value="org:member">Member</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex justify-end gap-2 pt-2">
-                        <Button variant="outline" onClick={() => setInviteDialogOpen(false)}>
-                          Cancel
-                        </Button>
-                        <Button onClick={handleInviteDeveloper} disabled={!inviteEmail.trim()}>
-                          Send Invite
-                        </Button>
-                      </div>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-                )}
-              </div>
-
-              {/* Important Information Box */}
-              <div className="bg-primary/5 border border-primary/20 rounded-lg p-6 space-y-4">
-                <h3 className="text-lg font-semibold text-primary">Important information About Joining Workspaces</h3>
-                
-                <div className="space-y-3 text-gray-700 dark:text-gray-300 text-sm leading-relaxed">
-                  <p>
-                    Joining a workspace gives the workspace admin(s) full control over your account.
-                  </p>
-                  
-                  <p>
-                    Any assets on your account will be transferred to the workspace - this includes your generated content and voices. They will appear gradually in the new workspace over the next few minutes.
-                  </p>
-                  
-                  <p>
-                    You will still be able to access your content. You will be able to share your content with other members of the workspace. The workspace admins will be able to see/edit all of your content. The workspace admins will be able to lock you out or delete your account and your assets.
-                  </p>
-                  
-                  <p>
-                    Joining a workspace is irreversible, and you will not be able to create a new account with this email unless the workspace admin frees up this email.
-                  </p>
-                  
-                  <p className="font-semibold text-gray-900 dark:text-white">
-                    Do not join workspaces you don&apos;t trust.
-                  </p>
-                </div>
-              </div>
-
-              {/* Developers List */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                    <Users className="h-5 w-5" />
-                    Team Members ({developers.length})
-                  </h3>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={fetchDevelopers}
-                    className="gap-2"
-                    disabled={isLoading}
+                  <Button
+                    onClick={() => window.location.href = '/billing'}
+                    className="bg-primary hover:bg-primary/90 text-white"
                   >
-                    <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-                    Refresh
+                    Purchase Credits
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleStripePortal}
+                  >
+                    Stripe Portal
                   </Button>
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-                {isLoading ? (
-                  <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6 border border-gray-200 dark:border-gray-800">
-                    <p className="text-gray-600 dark:text-gray-400 text-center">Loading developers...</p>
-                  </div>
-                ) : developers.length === 0 ? (
-                  <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6 border border-gray-200 dark:border-gray-800">
-                    <p className="text-gray-600 dark:text-gray-400 text-center">No developers in this workspace yet.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {developers.map((developer) => (
-                      <div
-                        key={developer.id}
-                        className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 border border-gray-200 dark:border-gray-800 hover:border-primary/40 hover:shadow-lg transition-all"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4 flex-1">
-                            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center border-2 border-primary/30">
-                              {developer.avatar ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={developer.avatar} alt={developer.name} className="h-full w-full rounded-full object-cover" />
-                              ) : (
-                                <User className="h-6 w-6 text-primary" />
-                              )}
-                            </div>
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <h4 className="font-semibold text-gray-900 dark:text-white">{developer.name}</h4>
-                                {developer.role === 'admin' && (
-                                  <span className="flex items-center gap-1 text-xs font-medium text-primary bg-primary/10 px-2 py-0.5 rounded">
-                                    <Shield className="h-3 w-3" />
-                                    Admin
-                                  </span>
-                                )}
-                                {developer.role === 'developer' && (
-                                  <span className="text-xs font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950 px-2 py-0.5 rounded">
-                                    Developer
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-4 mt-1">
-                                <span className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1">
-                                  <Mail className="h-3 w-3" />
-                                  {developer.email}
-                                </span>
-                                {developer.lastActive && (
-                                  <span className="text-xs text-gray-500 dark:text-gray-500">
-                                    Active {developer.lastActive}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500 dark:text-gray-500">
-                              Joined {new Date(developer.joinedAt).toLocaleDateString()}
-                            </span>
-                            {developer.role !== 'admin' && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleRemoveDeveloper(developer.id)}
-                                className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 border-red-300 dark:border-red-800"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+          {/* Team Tab */}
+          <TabsContent value="team" className="space-y-6 mt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Team Members</h2>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                  Manage team members and their access levels.
+                </p>
               </div>
+              <Button
+                onClick={() => setInviteModalOpen(true)}
+                className="bg-primary hover:bg-primary/90 text-white gap-2"
+                disabled={!organization && !user}
+              >
+                <Plus className="h-4 w-4" />
+                Invite Member
+              </Button>
             </div>
-          )}
-        </div>
+
+            {membersLoading ? (
+              <Card>
+                <CardContent className="flex items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                </CardContent>
+              </Card>
+            ) : !organization ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12">
+                  <Users className="h-12 w-12 text-gray-400 dark:text-gray-600 mb-4" />
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">No Workspace Found</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4 text-center max-w-md">
+                    A workspace will be created automatically when you invite your first team member. This allows you to collaborate with others.
+                  </p>
+                  <Button
+                    onClick={() => setInviteModalOpen(true)}
+                    className="bg-primary hover:bg-primary/90 text-white"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create Workspace & Invite Member
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : teamMembers.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12">
+                  <Users className="h-12 w-12 text-gray-400 dark:text-gray-600 mb-4" />
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">No team members</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    Invite team members to collaborate on your workspace.
+                  </p>
+                  <Button
+                    onClick={() => setInviteModalOpen(true)}
+                    className="bg-primary hover:bg-primary/90 text-white"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Invite Member
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-gray-50 dark:bg-gray-900">
+                        <TableHead className="text-gray-900 dark:text-white">Name</TableHead>
+                        <TableHead className="text-gray-900 dark:text-white">Email</TableHead>
+                        <TableHead className="text-gray-900 dark:text-white">Role</TableHead>
+                        <TableHead className="text-gray-900 dark:text-white">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {teamMembers.map((member: TeamMember) => (
+                        <TableRow key={member.id}>
+                          <TableCell className="font-medium text-gray-900 dark:text-white">
+                            {member.name}
+                          </TableCell>
+                          <TableCell className="text-gray-600 dark:text-gray-400">
+                            {member.email}
+                          </TableCell>
+                          <TableCell>
+                            {member.role === 'admin' ? (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded">
+                                <Shield className="h-3 w-3" />
+                                Admin
+                              </span>
+                            ) : (
+                              <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+                                Member
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {member.role !== 'admin' && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem
+                                    className="text-destructive hover:bg-red-50 dark:hover:bg-red-950"
+                                    onClick={() => handleRemoveMember(member.userId)}
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Remove
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
+
+            <InviteMemberModal
+              isOpen={inviteModalOpen}
+              onClose={() => setInviteModalOpen(false)}
+              onSuccess={handleInviteSuccess}
+            />
+          </TabsContent>
+
+          {/* Workspace Tab */}
+          <TabsContent value="workspace" className="space-y-6 mt-6">
+            {!organization ? (
+              <Card>
+                <CardContent className="py-6">
+                  <div className="text-center space-y-4">
+                    <Building2 className="h-12 w-12 text-gray-400 dark:text-gray-600 mx-auto" />
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">No Workspace Found</h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        A workspace will be created automatically when you invite your first team member.
+                      </p>
+                      <Button
+                        onClick={() => setInviteModalOpen(true)}
+                        className="bg-primary hover:bg-primary/90 text-white"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Create Workspace & Invite Member
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Building2 className="h-5 w-5" />
+                    Workspace Settings
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="workspace-name" className="text-sm font-medium text-gray-900 dark:text-white">
+                      Workspace Name
+                    </Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="workspace-name"
+                        defaultValue={organization.name || ''}
+                        placeholder="My Workspace"
+                        className="bg-white dark:bg-black border-gray-300 dark:border-gray-800"
+                      />
+                      <Button
+                        onClick={() => {
+                          const input = document.getElementById('workspace-name') as HTMLInputElement
+                          if (input?.value && input.value.trim()) {
+                            handleRenameWorkspace(input.value.trim())
+                          } else {
+                            toast({
+                              title: 'Validation error',
+                              description: 'Workspace name cannot be empty',
+                              variant: 'destructive',
+                            })
+                          }
+                        }}
+                        className="bg-primary hover:bg-primary/90 text-white"
+                      >
+                        Rename
+                      </Button>
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-500">
+                      Change your workspace display name. This will update across the application.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
     </AppLayout>
   )

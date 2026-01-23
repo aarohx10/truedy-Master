@@ -174,7 +174,14 @@ class AuthManager {
           return null
         }
       } catch (error) {
-        console.error('[AuthManager] Token refresh failed:', error)
+        const rawError = error instanceof Error ? error : new Error(String(error))
+        console.error('[AUTH_MANAGER] Token refresh failed (RAW ERROR)', {
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          errorName: rawError.name,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        })
         return null
       } finally {
         this._isRefreshing = false
@@ -203,7 +210,14 @@ class AuthManager {
       try {
         callback(token)
       } catch (error) {
-        console.error('[AuthManager] Listener error:', error)
+        const rawError = error instanceof Error ? error : new Error(String(error))
+        console.error('[AUTH_MANAGER] Listener error (RAW ERROR)', {
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          errorName: rawError.name,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        })
       }
     })
   }

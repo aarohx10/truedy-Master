@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { AppLayout } from '@/components/layout/app-layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,1840 +13,286 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { ChevronRight, Link2, MoreHorizontal, Mic2, Video, Copy, ChevronDown, ChevronUp, Phone, Link, Upload, Save } from 'lucide-react'
-import { useAgentStore } from '@/stores/agent-store'
-import { useAgent, useUpdateAgent } from '@/hooks/use-agents'
+import { useCreateAgent } from '@/hooks/use-agents'
 import { useVoices } from '@/hooks/use-voices'
+import { useKnowledgeBases } from '@/hooks/use-knowledge-bases'
 import { useToast } from '@/hooks/use-toast'
-import { UpdateAgentData } from '@/types'
-import { CreateCallModal } from '@/components/calls/create-call-modal'
-import { useCreateCall } from '@/hooks/use-calls'
+import { useAuthReady, useClientId } from '@/lib/clerk-auth-client'
+import { Loader2, ArrowLeft } from 'lucide-react'
+import { CreateAgentData } from '@/types'
 
 export default function NewAgentPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const { toast } = useToast()
-  const { selectedAgent, setSelectedAgent } = useAgentStore()
-  const isDuplicate = searchParams.get('duplicate') === 'true'
-  const agentId = selectedAgent?.id
+  const isAuthReady = useAuthReady()
+  const clientId = useClientId()
+  const createAgentMutation = useCreateAgent()
   
-  // Fetch agent data if editing existing agent
-  const { data: agentData, isLoading: agentLoading } = useAgent(agentId || '')
+  // Only fetch voices and KBs when auth is ready
+  const { data: voices = [], isLoading: voicesLoading, error: voicesError } = useVoices('custom')
+  const { data: knowledgeBases = [], isLoading: kbLoading, error: kbError } = useKnowledgeBases()
   
-  // Use agentData if available, otherwise use selectedAgent from store
-  const currentAgent = agentData || selectedAgent
-  const agentName = currentAgent?.name || 'New Agent'
+  const [name, setName] = useState('')
+  const [systemPrompt, setSystemPrompt] = useState('You are a helpful AI assistant.')
+  const [voiceId, setVoiceId] = useState<string>('')
+  const [knowledgeBaseId, setKnowledgeBaseId] = useState<string>('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
   
-  const updateAgentMutation = useUpdateAgent()
-  const { data: voices = [] } = useVoices()
-  const createCallMutation = useCreateCall()
-  const [isSaving, setIsSaving] = useState(false)
-  const [selectedTab, setSelectedTab] = useState('agent')
-  const [showTestModal, setShowTestModal] = useState(false)
-  const [agentLanguage, setAgentLanguage] = useState('english')
-  const [firstMessage, setFirstMessage] = useState("Hey there, I'm Alexis from ElevenLabs support. How can I help you today?")
-  const [disableInterruptions, setDisableInterruptions] = useState(false)
-  
-  // Initialize form fields from agent data
-  const [systemPrompt, setSystemPrompt] = useState(currentAgent?.system_prompt || `# Personality
-
-You are Alexis. A friendly, proactive, and highly intelligent female with a world-class engineering background.
-
-Your approach is warm, witty, and relaxed, effortlessly balancing professionalism with a chill, approachable vibe.
-
-You're naturally curious, empathetic, and intuitive, always aiming to deeply understand the user's intent by actively listening and thoughtfully referring back to details they've previously shared.
-
-You're highly self-aware, reflective, and comfortable acknowledging your own fallibility, which allows you to help users gain clarity in a thoughtful yet approachable manner.
-
-Depending on the situation, you gently incorporate humour or subtle sarcasm while always ensuring your tone remains friendly and respectful.
-
-# Tone
-
-Early in conversations, subtly assess the user's technical background ("Before I dive in—are you familiar with APIs, or would you prefer a high-level overview?") and tailor your language accordingly.
-
-After explaining complex concepts, offer brief check-ins ("Does that make sense?" or "Should I clarify anything?"). Express genuine empathy for any challenges they face, demonstrating your commitment to their success.
-
-Gracefully acknowledge your limitations or knowledge gaps when they arise. Focus on building trust, providing reassurance, and ensuring your explanations resonate with users.
-
-Anticipate potential follow-up questions and address them proactively, offering practical tips and best practices to help users avoid common pitfalls.
-
-Your responses should be thoughtful, concise, and conversational—typically three sentences or fewer`)
-  const [ignorePersonality, setIgnorePersonality] = useState(false)
-  const [selectedLLM, setSelectedLLM] = useState('glm-4.5-air')
-  const [backupLLM, setBackupLLM] = useState('default')
-  const [reasoningEffort, setReasoningEffort] = useState('none')
-  const [temperature, setTemperature] = useState(0)
-  const [limitTokenUsage, setLimitTokenUsage] = useState(-1)
-  
-  // Tools state
-  const [endCall, setEndCall] = useState(false)
-  const [detectLanguage, setDetectLanguage] = useState(false)
-  const [skipTurn, setSkipTurn] = useState(false)
-  const [transferToAgent, setTransferToAgent] = useState(false)
-  const [transferToNumber, setTransferToNumber] = useState(false)
-  const [playKeypadTone, setPlayKeypadTone] = useState(false)
-  const [voicemailDetection, setVoicemailDetection] = useState(false)
-  
-  // Initialize form when agent data loads
+  // Log errors for debugging and show user-friendly messages
   useEffect(() => {
-    if (currentAgent && !isDuplicate) {
-      setSystemPrompt(currentAgent.system_prompt || systemPrompt)
-      setSelectedVoice(currentAgent.voice_id || '')
-      // Initialize other fields from agent data as needed
+    if (voicesError) {
+      console.error('Error loading voices:', voicesError)
+      // Don't show toast for background data loading errors - only log
     }
-  }, [currentAgent, isDuplicate])
+    if (kbError) {
+      console.error('Error loading knowledge bases:', kbError)
+      // Don't show toast for background data loading errors - only log
+    }
+  }, [voicesError, kbError])
   
-  // Handle save agent
-  const handleSaveAgent = async () => {
-    if (!currentAgent?.id) {
+  // Show error if auth is not ready after a delay
+  useEffect(() => {
+    if (!isAuthReady && clientId === null) {
+      const timer = setTimeout(() => {
+        if (!isAuthReady) {
+          console.warn('[NewAgentPage] Auth not ready after delay')
+        }
+      }, 5000)
+      return () => clearTimeout(timer)
+    }
+  }, [isAuthReady, clientId])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (!name.trim() || !systemPrompt.trim()) {
       toast({
-        title: 'No agent selected',
-        description: 'Please create an agent first.',
+        title: 'Validation error',
+        description: 'Name and system prompt are required',
         variant: 'destructive',
       })
       return
     }
     
-    setIsSaving(true)
+    if (!isAuthReady || !clientId) {
+      toast({
+        title: 'Authentication required',
+        description: 'Please wait for authentication to complete',
+        variant: 'destructive',
+      })
+      return
+    }
+    
+    setIsSubmitting(true)
+
     try {
-      const updateData: UpdateAgentData = {
-        name: agentName,
-        system_prompt: systemPrompt,
-        voice_id: selectedVoice || currentAgent.voice_id,
-        // Ultravox API fields
-        agentLanguage: agentLanguage,
-        firstMessage: firstMessage,
-        disableInterruptions: disableInterruptions,
-        selectedLLM: selectedLLM,
-        temperature: temperature,
-        stability: stability,
-        similarity: similarity,
-        speed: speed,
-        turnTimeout: turnTimeout,
-        maxConversationDuration: maxConversationDuration,
-        // New fields from Ultravox UI
-        firstMessageDelay: firstMessageDelay,
-        firstSpeaker: firstSpeaker,
-        joinTimeout: joinTimeout,
-        timeExceededMessage: timeExceededMessage,
-        // Voice Activity Detection parameters
-        turnEndpointDelay: turnEndpointDelay,
-        minimumTurnDuration: minimumTurnDuration,
-        minimumInterruptionDuration: minimumInterruptionDuration,
-        frameActivationThreshold: frameActivationThreshold,
-        // Additional Ultravox API fields
-        confidenceThreshold: confidenceThreshold,
-        fallbackResponse: fallbackResponse,
-        timezone: timezone,
-        personality: personality,
-        voicePitch: voicePitch,
-        voiceStyle: voiceStyle,
-        useSpeakerBoost: useSpeakerBoost,
-        knowledgeBaseSearchEnabled: knowledgeBaseSearchEnabled,
-        knowledgeBaseContextWindow: knowledgeBaseContextWindow,
+      const agentData: CreateAgentData = {
+        name: name.trim(),
+        system_prompt: systemPrompt.trim(),
+        voice_id: (voiceId && voiceId !== 'none') ? voiceId : undefined,
+        knowledge_bases: (knowledgeBaseId && knowledgeBaseId !== 'none') ? [knowledgeBaseId] : [],
+        model: 'fixie-ai/ultravox-v0_4-8k',
+        tools: [],
+      }
+
+      const newAgent = await createAgentMutation.mutateAsync(agentData)
+
+      toast({
+        title: 'Agent created',
+        description: `"${name}" has been created successfully.`,
+      })
+
+      // Navigate to agents list
+      router.push('/agents')
+    } catch (error) {
+      console.error('Error creating agent:', error)
+      
+      // Extract error message
+      let errorMessage = 'Failed to create agent. Please try again.'
+      if (error instanceof Error) {
+        errorMessage = error.message
+      } else if (typeof error === 'object' && error !== null && 'message' in error) {
+        errorMessage = String(error.message)
       }
       
-      await updateAgentMutation.mutateAsync({
-        id: currentAgent.id,
-        data: updateData,
-      })
-      
       toast({
-        title: 'Agent saved',
-        description: 'Your changes have been saved successfully.',
-      })
-    } catch (error) {
-      toast({
-        title: 'Error saving agent',
-        description: error instanceof Error ? error.message : 'Failed to save agent. Please try again.',
+        title: 'Error creating agent',
+        description: errorMessage,
         variant: 'destructive',
+        duration: 8000,
       })
     } finally {
-      setIsSaving(false)
+      setIsSubmitting(false)
     }
   }
 
-  // Handle test agent (create call)
-  const handleTestAgent = () => {
-    if (!currentAgent?.id) {
-      toast({
-        title: 'No agent selected',
-        description: 'Please create an agent first.',
-        variant: 'destructive',
-      })
-      return
-    }
-    
-    if (currentAgent.status !== 'active') {
-      toast({
-        title: 'Agent not active',
-        description: 'Please wait for the agent to be activated before testing.',
-        variant: 'destructive',
-      })
-      return
-    }
-    
-    setShowTestModal(true)
+  // Safely filter voices and KBs with error handling
+  const activeVoices = Array.isArray(voices) ? voices.filter(v => v?.status === 'active') : []
+  const readyKBs = Array.isArray(knowledgeBases) ? knowledgeBases.filter(kb => kb?.status === 'ready') : []
+
+  // Show loading state if auth is not ready
+  if (!isAuthReady || !clientId) {
+    return (
+      <AppLayout>
+        <div className="max-w-2xl mx-auto px-6 py-8">
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-gray-400" />
+              <p className="text-gray-600 dark:text-gray-400">Loading...</p>
+            </div>
+          </div>
+        </div>
+      </AppLayout>
+    )
   }
-
-  const handleCreateTestCall = async (data: { agent_id: string; phone_number: string; direction: 'inbound' | 'outbound' }) => {
-    try {
-      await createCallMutation.mutateAsync({
-        ...data,
-        call_settings: {},
-        context: {},
-      })
-      toast({
-        title: 'Test call initiated',
-        description: 'The call has been queued and will start shortly. You can view it in the Calls page.',
-      })
-      setShowTestModal(false)
-      router.push('/calls')
-    } catch (error) {
-      toast({
-        title: 'Error creating test call',
-        description: error instanceof Error ? error.message : 'Failed to create test call. Please try again.',
-        variant: 'destructive',
-      })
-    }
-  }
-  
-  // Voice settings
-  const [selectedVoice, setSelectedVoice] = useState(currentAgent?.voice_id || '')
-  const [useFlash, setUseFlash] = useState(false)
-  const [ttsFormat, setTtsFormat] = useState('pcm-16000')
-  const [streamingLatency, setStreamingLatency] = useState(0.35)
-  const [stability, setStability] = useState(0.35)
-  const [speed, setSpeed] = useState(1.0)
-  const [similarity, setSimilarity] = useState(0.75)
-  
-  // Advanced settings
-  const [turnTimeout, setTurnTimeout] = useState(7)
-  const [silenceEndCallTimeout, setSilenceEndCallTimeout] = useState(-1)
-  const [maxConversationDuration, setMaxConversationDuration] = useState(600)
-  const [keywords, setKeywords] = useState('')
-  const [chatMode, setChatMode] = useState(false)
-  const [userInputAudioFormat, setUserInputAudioFormat] = useState('pcm-16000')
-  const [storeCallAudio, setStoreCallAudio] = useState(true)
-  const [zeroPIIRetentionMode, setZeroPIIRetentionMode] = useState(false)
-  const [conversationsRetentionPeriod, setConversationsRetentionPeriod] = useState(-1)
-  
-  // New fields from Ultravox UI
-  const [firstMessageDelay, setFirstMessageDelay] = useState(0)
-  const [firstSpeaker, setFirstSpeaker] = useState('agent')
-  const [joinTimeout, setJoinTimeout] = useState(30)
-  const [timeExceededMessage, setTimeExceededMessage] = useState('')
-  // Voice Activity Detection parameters
-  const [turnEndpointDelay, setTurnEndpointDelay] = useState(500)
-  const [minimumTurnDuration, setMinimumTurnDuration] = useState(250)
-  const [minimumInterruptionDuration, setMinimumInterruptionDuration] = useState(250)
-  const [frameActivationThreshold, setFrameActivationThreshold] = useState(0.5)
-  
-  // Additional Ultravox API fields
-  const [confidenceThreshold, setConfidenceThreshold] = useState(0.5)
-  const [fallbackResponse, setFallbackResponse] = useState('')
-  const [timezone, setTimezone] = useState('UTC')
-  const [personality, setPersonality] = useState('professional')
-  const [voicePitch, setVoicePitch] = useState(0)
-  const [voiceStyle, setVoiceStyle] = useState(0.5)
-  const [useSpeakerBoost, setUseSpeakerBoost] = useState(false)
-  const [knowledgeBaseSearchEnabled, setKnowledgeBaseSearchEnabled] = useState(true)
-  const [knowledgeBaseContextWindow, setKnowledgeBaseContextWindow] = useState(5)
-  
-  // Client Events
-  const [clientEvents, setClientEvents] = useState({
-    audio: true,
-    interruption: true,
-    user_transcript: true,
-    agent_response: true,
-    agent_response_correction: true
-  })
-  
-  // Widget settings
-  const [feedbackCollection, setFeedbackCollection] = useState('during-conversation')
-  const [startsCollapsed, setStartsCollapsed] = useState('starts-collapsed')
-  const [widgetVariant, setWidgetVariant] = useState('full')
-  const [widgetPlacement, setWidgetPlacement] = useState('bottom-right')
-  const [avatarType, setAvatarType] = useState('orb')
-  const [firstColor, setFirstColor] = useState('#2792dc')
-  const [secondColor, setSecondColor] = useState('#9ce6e6')
-  const [imageUrl, setImageUrl] = useState('')
-  const [chatTextOnly, setChatTextOnly] = useState(false)
-  const [sendTextWhileOnCall, setSendTextWhileOnCall] = useState(false)
-  const [enableTerms, setEnableTerms] = useState(false)
-  const [termsContent, setTermsContent] = useState(`#### Terms and conditions\n\nBy clicking "Agree," and each time I interact with this AI agent, I consent to the recording, storage, and sharing of my communications with third-party service providers, and as described in the Privacy Policy. If you do not wish to have your conversations recorded, please refrain from using this service.`)
-  const [localStorageKey, setLocalStorageKey] = useState('')
-  const [shareableDescription, setShareableDescription] = useState('Chat with AI')
-  const [requireTermsOnShareable, setRequireTermsOnShareable] = useState(true)
-  
-  // Theme colors
-  const [themeColors, setThemeColors] = useState({
-    base: '#ffffff',
-    base_hover: '#f9fafb',
-    base_active: '#f3f4f6',
-    base_border: '#e5e7eb',
-    base_subtle: '#6b7280',
-    base_primary: '#000000',
-    base_error: '#ef4444',
-    accent: '#000000',
-    accent_hover: '#1f2937',
-    accent_active: '#374151',
-    accent_border: '#4b5563',
-    accent_subtle: '#6b7280',
-    accent_primary: '#ffffff'
-  })
-  
-  // Theme radius/padding
-  const [themeRadius, setThemeRadius] = useState({
-    overlay_padding: '32px',
-    button_radius: '18px',
-    input_radius: '10px',
-    bubble_radius: '15px',
-    sheet_radius: '24px',
-    compact_sheet_radius: '30px',
-    dropdown_sheet_radius: '16px'
-  })
-  
-  // Text contents
-  const [textContents, setTextContents] = useState({
-    main_label: 'Need help?',
-    start_call: 'Start a call',
-    start_chat: 'Start a chat',
-    new_call: 'New call',
-    end_call: 'End',
-    mute_microphone: 'Mute microphone',
-    change_language: 'Change language',
-    collapse: 'Collapse',
-    expand: 'Expand',
-    copied: 'Copied!',
-    accept_terms: 'Accept',
-    dismiss_terms: 'Cancel',
-    listening_status: 'Listening',
-    speaking_status: 'Talk to interrupt',
-    connecting_status: 'Connecting',
-    chatting_status: 'Chatting with AI Agent',
-    input_label: 'Text message input',
-    input_placeholder: 'Send a message',
-    input_placeholder_text_only: 'Send a message',
-    input_placeholder_new_conversation: 'Start a new conversation',
-    user_ended_conversation: 'You ended the conversation',
-    agent_ended_conversation: 'The agent ended the conversation',
-    conversation_id: 'Conversation ID',
-    error_occurred: 'An error occurred',
-    copy_id: 'Copy ID'
-  })
-  
-  // Security settings
-  const [enableAuthentication, setEnableAuthentication] = useState(false)
-  const [allowlist, setAllowlist] = useState('')
-  const [overrideOptions, setOverrideOptions] = useState({
-    agentLanguage: false,
-    firstMessage: false,
-    systemPrompt: false,
-    llm: false,
-    voice: false,
-    voiceSpeed: false,
-    voiceStability: false,
-    voiceSimilarity: false,
-    textOnly: true
-  })
-  const [fetchInitiationFromWebhook, setFetchInitiationFromWebhook] = useState(false)
-  const [concurrentCallsLimit, setConcurrentCallsLimit] = useState(-1)
-  const [dailyCallsLimit, setDailyCallsLimit] = useState(100000)
-  const [enableBursting, setEnableBursting] = useState(false)
-
-  const tabs = [
-    { id: 'agent', label: 'Agent' },
-    { id: 'voice', label: 'Voice' },
-    { id: 'analysis', label: 'Analysis' },
-    { id: 'security', label: 'Security' },
-    { id: 'advanced', label: 'Advanced' },
-    { id: 'widget', label: 'Widget' },
-  ] as const
-
-  const temperaturePresets = [
-    { label: 'Deterministic', value: 0 },
-    { label: 'Creative', value: 0.7 },
-    { label: 'More Creative', value: 1.2 },
-  ]
 
   return (
     <AppLayout>
-      <div className="flex flex-col h-full bg-white dark:bg-black xl:-mt-[72px]">
-        {/* Header - Fixed at top */}
-        <div className="flex-shrink-0 border-b border-gray-200 dark:border-gray-900 bg-white dark:bg-black px-6 py-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            {/* Breadcrumb */}
-            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 dark:text-gray-400">
-              <button 
-                onClick={() => router.push('/agents')}
-                className="hover:text-gray-900 dark:hover:text-white transition-colors"
-              >
-                Agents
-              </button>
-              <ChevronRight className="h-4 w-4" />
-              <span className="text-gray-900 dark:text-white font-medium">{agentName}</span>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex items-center gap-3">
-              {currentAgent?.id && (
+      <div className="max-w-2xl mx-auto px-6 py-8">
+        {/* Header */}
+        <div className="mb-6">
                 <Button 
-                  onClick={handleSaveAgent}
-                  disabled={isSaving}
-                  className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30 gap-2"
-                >
-                  <Save className="h-4 w-4" />
-                  {isSaving ? 'Saving...' : 'Save Changes'}
+            variant="ghost"
+            onClick={() => router.back()}
+            className="mb-4"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
                 </Button>
-              )}
-              {currentAgent?.id && currentAgent?.status === 'active' && (
-                <Button 
-                  onClick={handleTestAgent}
-                  className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30 gap-2"
-                >
-                  <Phone className="h-4 w-4" />
-                  Test Agent
-                </Button>
-              )}
-              <Button variant="outline" className="gap-2 hover:bg-primary/5 hover:border-primary/40 transition-all">
-                <Link2 className="h-4 w-4" />
-                Copy link
-                  </Button>
-              <Button variant="ghost" size="icon">
-                <MoreHorizontal className="h-5 w-5" />
-              </Button>
-            </div>
-            </div>
-        </div>
-        
-        {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto">
-
-        {/* Agent Title */}
-        <div className="px-6 py-5 border-b border-gray-200 dark:border-gray-900">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">{agentName}</h1>
-            <span className="px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-900 text-gray-700 dark:text-gray-300 rounded">
-              Public
-            </span>
-            {currentAgent?.status && (
-              <span className={`px-2 py-1 text-xs font-medium rounded ${
-                currentAgent.status === 'active' 
-                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                  : currentAgent.status === 'creating'
-                  ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
-                  : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
-              }`}>
-                {currentAgent.status}
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-gray-500 dark:text-gray-500 dark:text-gray-500 mt-1">{currentAgent?.id || 'agent_0901k87kr394ewbbs7n9ksn99zp7'}</p>
-          </div>
-
-        {/* Test Agent Section - Only show for active agents */}
-        {currentAgent?.id && currentAgent?.status === 'active' && (
-          <div className="px-6 py-4 bg-primary/5 border-b border-primary/20">
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1 flex items-center gap-2">
-                  <Phone className="h-4 w-4 text-primary" />
-                  Test Your Agent
-                </h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Make a test call to verify your agent is working correctly. Enter a phone number and the agent will call you.
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Create Agent</h1>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            Create a new AI agent with voice and knowledge base support
                 </p>
               </div>
-              <Button 
-                onClick={handleTestAgent}
-                className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30 gap-2 ml-4"
-              >
-                <Phone className="h-4 w-4" />
-                Test Now
-              </Button>
-            </div>
-          </div>
-        )}
 
-          {/* Tabs */}
-        <div className="border-b border-gray-200 dark:border-gray-900 bg-white dark:bg-black px-6">
-          <div className="flex gap-6">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setSelectedTab(tab.id)}
-                className={`relative py-4 text-sm font-medium transition-colors ${
-                  selectedTab === tab.id
-                    ? 'text-primary border-b-2 border-primary'
-                    : 'text-gray-600 dark:text-gray-400 hover:text-primary hover:border-primary/40'
-                }`}
-              >
-                <span>{tab.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Content */}
-        {selectedTab === 'agent' && (
-          <div className="px-6 py-6 max-w-4xl space-y-6">
-            {/* Agent Language */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white dark:text-white mb-1">Agent Language</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 dark:text-gray-400 mb-4">
-                Choose the default language the agent will communicate in.
-              </p>
-              <Select value={agentLanguage} onValueChange={setAgentLanguage}>
-                <SelectTrigger className="w-full max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary">
-                  <div className="flex items-center gap-2">
-                    <span>🇺🇸</span>
-                    <SelectValue />
-                </div>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="english">
-                    <div className="flex items-center gap-2">
-                      <span>🇺🇸</span>
-                      <span>English</span>
-                </div>
-                  </SelectItem>
-                  <SelectItem value="spanish">
-                    <div className="flex items-center gap-2">
-                      <span>🇪🇸</span>
-                      <span>Spanish</span>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="french">
-                    <div className="flex items-center gap-2">
-                      <span>🇫🇷</span>
-                      <span>French</span>
-                    </div>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-                    </div>
-
-
-            {/* First Message */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white dark:text-white mb-1">First message</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 dark:text-gray-400 mb-4">
-                The first message the agent will say. If empty, the agent will wait for the user to start the conversation.
-              </p>
-              <Textarea
-                value={firstMessage}
-                onChange={(e) => setFirstMessage(e.target.value)}
-                className="min-h-[80px] bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-              />
-              <div className="flex items-center gap-2 mt-4">
-                <input
-                  type="checkbox"
-                  id="disable-interruptions"
-                  checked={disableInterruptions}
-                  onChange={(e) => setDisableInterruptions(e.target.checked)}
-                  className="rounded border-gray-300 dark:border-gray-700 text-primary focus:ring-primary"
-                />
-                <label htmlFor="disable-interruptions" className="text-sm text-gray-700 dark:text-gray-300 dark:text-gray-300">
-                  Disable interruptions during first message
-                </label>
-              </div>
-              <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-                Select this box to prevent users from interrupting while the first message is being delivered.
-              </p>
-              
-              {/* First Message Delay */}
-              <div className="mt-4">
-                <label htmlFor="first-message-delay" className="text-sm font-medium text-gray-900 dark:text-white mb-2 block">
-                  First Message Delay (seconds)
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Agent Name */}
+          <div className="space-y-2">
+            <label htmlFor="name" className="text-sm font-medium text-gray-900 dark:text-white">
+              Agent Name <span className="text-red-500">*</span>
                 </label>
                 <Input
-                  id="first-message-delay"
-                  type="number"
-                  min="0"
-                  max="60"
-                  value={firstMessageDelay}
-                  onChange={(e) => setFirstMessageDelay(parseInt(e.target.value) || 0)}
-                  className="max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-                  placeholder="0"
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                  The amount of time to wait before the agent starts speaking its first message.
-                </p>
-              </div>
-              
-              {/* First Speaker */}
-              <div className="mt-4">
-                <label htmlFor="first-speaker" className="text-sm font-medium text-gray-900 dark:text-white mb-2 block">
-                  First Speaker
-                </label>
-                <Select value={firstSpeaker} onValueChange={setFirstSpeaker}>
-                  <SelectTrigger className="w-full max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="agent">Agent</SelectItem>
-                    <SelectItem value="user">User</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                  Determines who speaks first in the conversation.
-                </p>
-              </div>
-              
-              <Button variant="ghost" size="sm" className="mt-4 text-gray-700 dark:text-gray-300">
-                + Add Variable
-                      </Button>
+              id="name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="My AI Agent"
+              required
+              maxLength={100}
+              className="bg-white dark:bg-black border-gray-300 dark:border-gray-800"
+            />
                     </div>
 
             {/* System Prompt */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-center justify-between mb-1">
-                <h3 className="text-base font-semibold text-gray-900 dark:text-white">System prompt</h3>
-                <Button variant="ghost" size="sm" className="text-gray-600">
-                              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                              </svg>
-                            </Button>
-                          </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                The system prompt is used to determine the persona of the agent and the context of the conversation.{' '}
-                <a href="#" className="text-primary hover:underline">Learn more</a>
-              </p>
-                              <Input
-                placeholder="Describe the desired agent (e.g., a customer support agent for ElevenLabs)"
-                className="mb-4 bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-              />
+          <div className="space-y-2">
+            <label htmlFor="systemPrompt" className="text-sm font-medium text-gray-900 dark:text-white">
+              System Prompt <span className="text-red-500">*</span>
+            </label>
               <Textarea
+              id="systemPrompt"
                 value={systemPrompt}
                 onChange={(e) => setSystemPrompt(e.target.value)}
-                className="min-h-[300px] font-mono text-sm bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-              />
-              {/* Personality Selector */}
-              <div className="mt-4">
-                <label htmlFor="personality" className="text-sm font-medium text-gray-900 dark:text-white mb-2 block">
-                  Personality
-                </label>
-                <Select value={personality} onValueChange={setPersonality}>
-                  <SelectTrigger className="w-full max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="professional">Professional</SelectItem>
-                    <SelectItem value="friendly">Friendly</SelectItem>
-                    <SelectItem value="casual">Casual</SelectItem>
-                    <SelectItem value="expert">Expert</SelectItem>
-                    <SelectItem value="empathetic">Empathetic</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                  Select the personality style for the agent.
-                </p>
-              </div>
-              <div className="flex items-center justify-between mt-4">
-                <Button variant="ghost" size="sm" className="text-gray-700">
-                  + Add Variable
-                </Button>
-                <Button variant="ghost" size="sm" className="text-gray-700">
-                  🌐 Add timezone
-                </Button>
-                            </div>
+              placeholder="You are a helpful AI assistant..."
+              required
+              rows={8}
+              maxLength={5000}
+              className="bg-white dark:bg-black border-gray-300 dark:border-gray-800 resize-none"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-500">
+              {systemPrompt.length}/5000 characters
+            </p>
                           </div>
 
-            {/* Dynamic Variables */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Dynamic Variables</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Variables like <code className="bg-gray-200 px-1 py-0.5 rounded text-xs">{`{{user_name}}`}</code> in your prompts and first message will be replaced with actual values when the conversation starts. These variables can also be updated by agent tools.{' '}
-                <a href="#" className="text-primary hover:underline">Learn more</a>
-              </p>
-                          </div>
-
-            {/* LLM */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">LLM</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Select which provider and model to use for the LLM.<br />
-                If your chosen LLM is not available at the moment or something goes wrong, we will redirect the conversation to another LLM.
-              </p>
-              <Select value={selectedLLM} onValueChange={setSelectedLLM}>
-                <SelectTrigger className="w-full bg-white focus:ring-2 focus:ring-primary focus:border-primary">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="glm-4.5-air">
-                    <div className="flex items-center justify-between w-full">
-                      <span>GLM-4.5-Air</span>
-                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded ml-2">
-                        Recommended
-                      </span>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="gpt-4">GPT-4</SelectItem>
-                  <SelectItem value="claude-3">Claude 3</SelectItem>
-                </SelectContent>
-              </Select>
-                  </div>
-
-
-                  {/* Temperature */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Temperature</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Temperature is a parameter that controls the creativity or randomness of the responses generated by the LLM.
-              </p>
-              <div className="relative">
-                  <input
-                    type="range"
-                    min="0"
-                    max="2"
-                    step="0.1"
-                        value={temperature}
-                        onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                  className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-primary"
-                />
-                <div className="absolute left-0 top-6 w-full flex justify-between text-xs text-gray-500">
-                  <span>0</span>
-                  <span>1</span>
-                  <span>2</span>
-                </div>
-              </div>
-              <div className="flex gap-3 mt-8">
-                <p className="text-sm font-medium">Quick presets:</p>
-                {temperaturePresets.map((preset) => (
-                  <Button
-                    key={preset.label}
-                    variant={temperature === preset.value ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setTemperature(preset.value)}
-                    className={temperature === preset.value ? 'bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30' : 'hover:bg-primary/5 hover:border-primary/40'}
-                  >
-                    {preset.label}
-                  </Button>
-                ))}
-                    </div>
-                  </div>
-
-
-            {/* Agent Knowledge Base */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-center justify-between mb-1">
-                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Agent knowledge base</h3>
-                <Button variant="outline" size="sm">
-                  Add document
-                </Button>
-              </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Provide the LLM with domain-specific information to help it answer questions more accurately.
-              </p>
-              
-              {/* Knowledge Base Search Enabled */}
-              <div className="mt-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <label className="text-sm font-medium text-gray-900 dark:text-white">Enable Search</label>
-                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                      Enable search functionality in the knowledge base.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setKnowledgeBaseSearchEnabled(!knowledgeBaseSearchEnabled)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                      knowledgeBaseSearchEnabled ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-700'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        knowledgeBaseSearchEnabled ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-              
-              {/* Knowledge Base Context Window */}
-              <div className="mt-4">
-                <label htmlFor="knowledge-base-context-window" className="text-sm font-medium text-gray-900 dark:text-white mb-2 block">
-                  Context Window Size
-                </label>
-                <Input
-                  id="knowledge-base-context-window"
-                  type="number"
-                  min="1"
-                  max="20"
-                  value={knowledgeBaseContextWindow}
-                  onChange={(e) => setKnowledgeBaseContextWindow(parseInt(e.target.value) || 5)}
-                  className="max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-                  placeholder="5"
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                  Number of context windows to use for knowledge base search (1-20).
-                </p>
-              </div>
-                    </div>
-
-            {/* Tools */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Tools</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-                Let the agent perform specific actions.
-              </p>
-              <div className="space-y-4">
-                {[
-                  { label: 'End call', description: 'Gives agent the ability to end the call with the user.', state: endCall, setState: setEndCall },
-                  { label: 'Detect language', description: 'Gives agent the ability to change the language during conversation.', state: detectLanguage, setState: setDetectLanguage },
-                  { label: 'Skip turn', description: 'Agent will skip its turn if user explicitly indicates they need a moment.', state: skipTurn, setState: setSkipTurn },
-                  { label: 'Transfer to agent', description: 'Gives agent the ability to transfer the call to another AI agent.', state: transferToAgent, setState: setTransferToAgent },
-                  { label: 'Transfer to number', description: 'Gives agent the ability to transfer the call to a human.', state: transferToNumber, setState: setTransferToNumber },
-                  { label: 'Play keypad touch tone', description: 'Gives agent the ability to play keypad touch tones during a phone call.', state: playKeypadTone, setState: setPlayKeypadTone },
-                  { label: 'Voicemail detection', description: 'Allows agent to detect voicemail systems and optionally leave a message.', state: voicemailDetection, setState: setVoicemailDetection },
-                ].map((tool) => (
-                  <div key={tool.label} className="flex items-center justify-between py-3 border-b border-gray-200 dark:border-gray-800 last:border-0">
-                    <div className="flex-1">
-                      <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{tool.label}</h4>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">{tool.description}</p>
-                    </div>
-                    <button
-                      onClick={() => tool.setState(!tool.state)}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                        tool.state ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-700'
-                      }`}
-                    >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                          tool.state ? 'translate-x-6' : 'translate-x-1'
-                        }`}
-                      />
-                        </button>
-                  </div>
-                ))}
-                  </div>
-                </div>
-
-            {/* Custom Tools */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-center justify-between mb-1">
-                <div>
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                    Custom tools
-                    <span className="text-xs bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded">↗</span>
-                  </h3>
-                </div>
-                <Button variant="outline" size="sm">
-                  Add tool
-                </Button>
-              </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Provide the agent with custom tools it can use to help users.
-              </p>
-        </div>
-
-          </div>
-        )}
-
-        {/* Voice Tab Content */}
-        {selectedTab === 'voice' && (
-          <div className="px-6 py-6 max-w-4xl space-y-6">
             {/* Voice Selection */}
-            <div className="bg-white dark:bg-black rounded-lg p-6 border border-gray-200 dark:border-gray-900">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Voice</h3>
-              <p className="text-sm text-primary mb-4">
-                Select the ElevenLabs voice you want to use for the agent.
-              </p>
-              <Select value={selectedVoice} onValueChange={setSelectedVoice}>
-                <SelectTrigger className="w-full max-w-xs bg-white dark:bg-black">
-                  <div className="flex items-center gap-2">
-                    <svg className="h-4 w-4 text-primary" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12z" clipRule="evenodd"/>
-                    </svg>
-                    <SelectValue placeholder="Select a voice" />
-                  </div>
+          <div className="space-y-2">
+            <label htmlFor="voice" className="text-sm font-medium text-gray-900 dark:text-white">
+              Voice (Optional)
+            </label>
+            <Select value={voiceId || undefined} onValueChange={(value) => setVoiceId(value === "none" ? "" : value)}>
+              <SelectTrigger className="bg-white dark:bg-black border-gray-300 dark:border-gray-800">
+                <SelectValue placeholder="Select a voice (optional)" />
                 </SelectTrigger>
                 <SelectContent>
-                  {voices.length === 0 ? (
-                    <SelectItem value="" disabled>No voices available. Create a voice first.</SelectItem>
-                  ) : (
-                    voices
-                      .filter(voice => voice.status === 'active')
-                      .map(voice => (
+                <SelectItem value="none">No voice</SelectItem>
+                {voicesLoading ? (
+                  <div className="px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400">Loading voices...</div>
+                ) : activeVoices.length === 0 ? (
+                  <div className="px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400">No active voices available</div>
+                ) : (
+                  activeVoices.map((voice) => (
                         <SelectItem key={voice.id} value={voice.id}>
-                          {voice.name} {voice.provider && `(${voice.provider})`}
+                      {voice.name} ({voice.provider})
                         </SelectItem>
                       ))
                   )}
                 </SelectContent>
               </Select>
-              {voices.length > 0 && voices.filter(v => v.status === 'active').length === 0 && (
-                <p className="text-sm text-amber-600 dark:text-amber-400 mt-2">
-                  No active voices available. Please create and activate a voice first.
+            {activeVoices.length === 0 && !voicesLoading && (
+              <p className="text-xs text-gray-500 dark:text-gray-500">
+                Create a voice in <button type="button" onClick={() => router.push('/voice-cloning')} className="text-primary hover:underline">Voice Cloning</button>
                 </p>
               )}
             </div>
 
-
-            {/* Stability */}
-            <div className="bg-white dark:bg-black rounded-lg p-6 border border-gray-200 dark:border-gray-900">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Stability</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Higher values will make speech more consistent. It can also make it sound more monotonous. Lower values will let the accent become more expressive, but may lead to instabilities.
-              </p>
-              <div className="relative pt-1">
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={stability}
-                  onChange={(e) => setStability(parseFloat(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary"
-                />
-                <div className="text-sm text-gray-900 dark:text-white mt-2">Current: {stability.toFixed(2)}</div>
-              </div>
-            </div>
-
-            {/* Speed */}
-            <div className="bg-white dark:bg-black rounded-lg p-6 border border-gray-200 dark:border-gray-900">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Speed</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Control the speed of the generated speech. Values below 1.0 will slow down the speech, while values above 1.0 will speed it up. Extreme values can affect quality of the generated speech.
-              </p>
-              <div className="relative pt-1">
-                <input
-                  type="range"
-                  min="0.5"
-                  max="2"
-                  step="0.1"
-                  value={speed}
-                  onChange={(e) => setSpeed(parseFloat(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary"
-                />
-                <div className="text-sm text-gray-900 dark:text-white mt-2">Current: {speed.toFixed(1)}</div>
-              </div>
-            </div>
-
-            {/* Similarity */}
-            <div className="bg-white dark:bg-black rounded-lg p-6 border border-gray-200 dark:border-gray-900">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Similarity</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Higher values will boost the overall clarity and consistency of the voice. Very high values might lead to artifacts. Adjusting this value to find the right balance is recommended.
-              </p>
-              <div className="relative pt-1">
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={similarity}
-                  onChange={(e) => setSimilarity(parseFloat(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary"
-                />
-                <div className="text-sm text-gray-900 dark:text-white mt-2">Current: {similarity.toFixed(2)}</div>
-              </div>
-            </div>
-
-            {/* Voice Pitch */}
-            <div className="bg-white dark:bg-black rounded-lg p-6 border border-gray-200 dark:border-gray-900">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Voice Pitch</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Adjust the pitch of the voice in semitones. Positive values increase pitch, negative values decrease it.
-              </p>
-              <div className="relative pt-1">
-                <input
-                  type="range"
-                  min="-20"
-                  max="20"
-                  step="1"
-                  value={voicePitch}
-                  onChange={(e) => setVoicePitch(parseInt(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary"
-                />
-                <div className="flex justify-between text-xs text-gray-500 mt-2">
-                  <span>-20</span>
-                  <span>0</span>
-                  <span>+20</span>
-                </div>
-                <div className="text-sm text-gray-900 dark:text-white mt-2">Current: {voicePitch > 0 ? '+' : ''}{voicePitch} semitones</div>
-              </div>
-            </div>
-
-            {/* Voice Style (ElevenLabs only) */}
-            <div className="bg-white dark:bg-black rounded-lg p-6 border border-gray-200 dark:border-gray-900">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Voice Style</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Control the style of the voice (ElevenLabs only). Higher values make the voice more expressive.
-              </p>
-              <div className="relative pt-1">
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={voiceStyle}
-                  onChange={(e) => setVoiceStyle(parseFloat(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary"
-                />
-                <div className="text-sm text-gray-900 dark:text-white mt-2">Current: {voiceStyle.toFixed(2)}</div>
-              </div>
-            </div>
-
-            {/* Use Speaker Boost (ElevenLabs only) */}
-            <div className="bg-white dark:bg-black rounded-lg p-6 border border-gray-200 dark:border-gray-900">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Use Speaker Boost</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Enable speaker boost for enhanced voice clarity (ElevenLabs only).
-                  </p>
-                </div>
-                <button
-                  onClick={() => setUseSpeakerBoost(!useSpeakerBoost)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    useSpeakerBoost ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-700'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      useSpeakerBoost ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Analysis Tab Content */}
-        {selectedTab === 'analysis' && (
-          <div className="px-6 py-6 max-w-4xl space-y-6">
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Analysis features are not currently supported by the Ultravox API.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Advanced Tab Content */}
-        {selectedTab === 'advanced' && (
-          <div className="px-6 py-6 max-w-4xl space-y-6">
-            {/* Turn timeout */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Turn timeout</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                The maximum number of seconds since the user last spoke. If exceeded, the agent will respond and force a turn. A value of -1 means the agent will never timeout and always wait for a response from the user.
-              </p>
-              <Input
-                type="number"
-                value={turnTimeout}
-                onChange={(e) => setTurnTimeout(parseInt(e.target.value))}
-                className="max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-              />
-            </div>
-
-
-            {/* Max conversation duration */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Max conversation duration</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                The maximum number of seconds that a conversation can last.
-              </p>
-              <Input
-                type="number"
-                value={maxConversationDuration}
-                onChange={(e) => setMaxConversationDuration(parseInt(e.target.value))}
-                className="max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-              />
-            </div>
-
-            {/* Join Timeout */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Join Timeout</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                The maximum amount of time to wait for a user to join (in seconds).
-              </p>
-              <Input
-                type="number"
-                min="0"
-                max="300"
-                value={joinTimeout}
-                onChange={(e) => setJoinTimeout(parseInt(e.target.value) || 30)}
-                className="max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-              />
-            </div>
-
-            {/* Time Exceeded Message */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Time Exceeded Message</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Custom message to display when the time limit is reached.
-              </p>
-              <Textarea
-                value={timeExceededMessage}
-                onChange={(e) => setTimeExceededMessage(e.target.value)}
-                placeholder="Sorry, we've reached our time limit..."
-                className="min-h-[80px] bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-              />
-            </div>
-
-            {/* Voice Activity Detection */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-4">Voice Activity Detection</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-                Configure voice activity detection parameters for turn-taking and interruptions.
-              </p>
-              
-              <div className="space-y-6">
-                {/* Turn Endpoint Delay */}
-                <div>
-                  <label htmlFor="turn-endpoint-delay" className="text-sm font-medium text-gray-900 dark:text-white mb-2 block">
-                    Turn Endpoint Delay (milliseconds)
+          {/* Knowledge Base Selection */}
+          <div className="space-y-2">
+            <label htmlFor="knowledgeBase" className="text-sm font-medium text-gray-900 dark:text-white">
+              Knowledge Base (Optional)
                   </label>
-                  <Input
-                    id="turn-endpoint-delay"
-                    type="number"
-                    min="0"
-                    max="5000"
-                    value={turnEndpointDelay}
-                    onChange={(e) => setTurnEndpointDelay(parseInt(e.target.value) || 500)}
-                    className="max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                    Delay before turn endpoint is triggered.
-                  </p>
-                </div>
-
-                {/* Minimum Turn Duration */}
-                <div>
-                  <label htmlFor="minimum-turn-duration" className="text-sm font-medium text-gray-900 dark:text-white mb-2 block">
-                    Minimum Turn Duration (milliseconds)
-                  </label>
-                  <Input
-                    id="minimum-turn-duration"
-                    type="number"
-                    min="0"
-                    max="5000"
-                    value={minimumTurnDuration}
-                    onChange={(e) => setMinimumTurnDuration(parseInt(e.target.value) || 250)}
-                    className="max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                    Minimum duration for a turn to be considered valid.
-                  </p>
-                </div>
-
-                {/* Minimum Interruption Duration */}
-                <div>
-                  <label htmlFor="minimum-interruption-duration" className="text-sm font-medium text-gray-900 dark:text-white mb-2 block">
-                    Minimum Interruption Duration (milliseconds)
-                  </label>
-                  <Input
-                    id="minimum-interruption-duration"
-                    type="number"
-                    min="0"
-                    max="5000"
-                    value={minimumInterruptionDuration}
-                    onChange={(e) => setMinimumInterruptionDuration(parseInt(e.target.value) || 250)}
-                    className="max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                    Minimum duration of user speech required to interrupt the agent.
-                  </p>
-                </div>
-
-                {/* Frame Activation Threshold */}
-                <div>
-                  <label htmlFor="frame-activation-threshold" className="text-sm font-medium text-gray-900 dark:text-white mb-2 block">
-                    Frame Activation Threshold
-                  </label>
-                  <div className="relative pt-1">
-                    <input
-                      id="frame-activation-threshold"
-                      type="range"
-                      min="0.1"
-                      max="1.0"
-                      step="0.1"
-                      value={frameActivationThreshold}
-                      onChange={(e) => setFrameActivationThreshold(parseFloat(e.target.value))}
-                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary"
-                    />
-                    <div className="flex justify-between text-xs text-gray-500 mt-2">
-                      <span>0.1</span>
-                      <span>0.5</span>
-                      <span>1.0</span>
-                    </div>
-                    <div className="text-sm text-gray-900 dark:text-white mt-2">Current: {frameActivationThreshold.toFixed(1)}</div>
-                  </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                    The threshold for the VAD to consider a frame as speech.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Confidence Threshold */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Confidence Threshold</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Minimum confidence level required for speech recognition (0.0-1.0).
-              </p>
-              <div className="relative pt-1">
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={confidenceThreshold}
-                  onChange={(e) => setConfidenceThreshold(parseFloat(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary"
-                />
-                <div className="text-sm text-gray-900 dark:text-white mt-2">Current: {confidenceThreshold.toFixed(2)}</div>
-              </div>
-            </div>
-
-            {/* Fallback Response */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Fallback Response</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Default message to use when the agent cannot generate a response.
-              </p>
-              <Textarea
-                value={fallbackResponse}
-                onChange={(e) => setFallbackResponse(e.target.value)}
-                placeholder="I'm sorry, I didn't understand that. Could you please rephrase?"
-                className="min-h-[80px] bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-              />
-            </div>
-
-            {/* Timezone */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Timezone</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Timezone for the agent (e.g., UTC, America/New_York, Europe/London).
-              </p>
-              <Input
-                type="text"
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-                placeholder="UTC"
-                className="max-w-xs bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-              />
-              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                Use IANA timezone database format (e.g., America/New_York).
-              </p>
-            </div>
-
-          </div>
-        )}
-
-        {/* Security Tab Content */}
-        {selectedTab === 'security' && (
-          <div className="px-6 py-6 max-w-4xl space-y-6">
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Security features are not currently supported by the Ultravox API.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Security Tab Content - REMOVED - All fields not supported by Ultravox API */}
-        {/* Removed: Enable authentication, Allowlist, Override options, Fetch initiation from webhook, Post-Call Webhook, Enable bursting, Concurrent Calls Limit, Daily Calls Limit */}
-        {false && selectedTab === 'security' && (
-          <div className="px-6 py-6 max-w-4xl space-y-6">
-            {/* Enable authentication */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-base font-semibold text-gray-900 dark:text-white">Enable authentication</h3>
-                    <Video className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                  </div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    Require users to authenticate before connecting to the agent.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setEnableAuthentication(!enableAuthentication)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
-                    enableAuthentication ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-700'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      enableAuthentication ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
-
-            {/* Allowlist */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-start justify-between gap-4 mb-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-base font-semibold text-gray-900 dark:text-white">Allowlist</h3>
-                    <Video className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                  </div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    Specify the hosts that will be allowed to connect to this agent.
-                  </p>
-                </div>
-                <Button variant="outline" className="flex-shrink-0">
-                  Add host
-                </Button>
-              </div>
-              <div className="bg-white dark:bg-black rounded-lg p-4 border border-gray-200 dark:border-gray-800 min-h-[100px]">
-                {allowlist ? (
-                  <p className="text-sm text-gray-900 dark:text-white">{allowlist}</p>
+            <Select value={knowledgeBaseId || undefined} onValueChange={(value) => setKnowledgeBaseId(value === "none" ? "" : value)}>
+              <SelectTrigger className="bg-white dark:bg-black border-gray-300 dark:border-gray-800">
+                <SelectValue placeholder="Select a knowledge base (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                <SelectItem value="none">No knowledge base</SelectItem>
+                {kbLoading ? (
+                  <div className="px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400">Loading knowledge bases...</div>
+                ) : readyKBs.length === 0 ? (
+                  <div className="px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400">No ready knowledge bases available</div>
                 ) : (
-                  <p className="text-sm text-gray-500 dark:text-gray-500">
-                    No allowlist specified. Any host will be able to connect to this agent.
-                  </p>
+                  readyKBs.map((kb) => (
+                    <SelectItem key={kb.id} value={kb.id}>
+                      {kb.name}
+                    </SelectItem>
+                  ))
                 )}
-              </div>
-            </div>
-
-            {/* Enable overrides */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Enable overrides</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Choose which parts of the config can be overridden by the client at the start of the conversation.
-              </p>
-              <div className="bg-white dark:bg-black rounded-lg p-4 border border-gray-200 dark:border-gray-800 space-y-4">
-                {[
-                  { key: 'agentLanguage', label: 'Agent language' },
-                  { key: 'firstMessage', label: 'First message' },
-                  { key: 'systemPrompt', label: 'System prompt' },
-                  { key: 'llm', label: 'LLM' },
-                  { key: 'voice', label: 'Voice' },
-                  { key: 'voiceSpeed', label: 'Voice speed' },
-                  { key: 'voiceStability', label: 'Voice stability' },
-                  { key: 'voiceSimilarity', label: 'Voice similarity' },
-                  { key: 'textOnly', label: 'Text only' },
-                ].map((option) => (
-                  <div key={option.key} className="flex items-center justify-between">
-                    <span className="text-sm text-gray-900 dark:text-white">{option.label}</span>
-                    <button
-                      onClick={() => setOverrideOptions(prev => ({ ...prev, [option.key]: !prev[option.key as keyof typeof prev] }))}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                        overrideOptions[option.key as keyof typeof overrideOptions] ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-700'
-                      }`}
-                    >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                          overrideOptions[option.key as keyof typeof overrideOptions] ? 'translate-x-6' : 'translate-x-1'
-                        }`}
-                      />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Fetch initiation client data from webhook */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Fetch initiation client data from webhook</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    If enabled, the conversation initiation client data will be fetched from the webhook defined in the{' '}
-                    <a href="#" className="text-primary hover:underline">settings</a> when receiving Twilio or SIP trunk calls.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setFetchInitiationFromWebhook(!fetchInitiationFromWebhook)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
-                    fetchInitiationFromWebhook ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-700'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      fetchInitiationFromWebhook ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
-
-            {/* Post-Call Webhook */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-base font-semibold text-gray-900 dark:text-white">Post-Call Webhook</h3>
-                    <Video className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                  </div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    Override the post-call webhook configured in{' '}
-                    <a href="#" className="text-primary hover:underline">settings</a> for this agent.
-                  </p>
-                </div>
-                <Button variant="outline" className="flex-shrink-0">
-                  Create Webhook
-                </Button>
-              </div>
-            </div>
-
-            {/* Enable bursting */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Enable bursting</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    If enabled, the agent can exceed the workspace subscription concurrency limit by up to 3 times, with excess calls charged at double the normal rate.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setEnableBursting(!enableBursting)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
-                    enableBursting ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-700'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      enableBursting ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
-
-            {/* Concurrent Calls Limit */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Concurrent Calls Limit</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    The maximum number of concurrent calls allowed.
-                    <br />
-                    Matching the subscription concurrency limit
-                  </p>
-                </div>
-                <Input
-                  type="number"
-                  value={concurrentCallsLimit}
-                  onChange={(e) => setConcurrentCallsLimit(parseInt(e.target.value) || -1)}
-                  className="w-32 bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary flex-shrink-0"
-                />
-              </div>
-            </div>
-
-            {/* Daily Calls Limit */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Daily Calls Limit</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    The maximum number of calls allowed per day.
-                  </p>
-                </div>
-                <Input
-                  type="number"
-                  value={dailyCallsLimit}
-                  onChange={(e) => setDailyCallsLimit(parseInt(e.target.value) || 0)}
-                  className="w-32 bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary flex-shrink-0"
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Widget Tab Content */}
-        {selectedTab === 'widget' && (
-          <div className="px-6 py-6 max-w-4xl space-y-6">
-            {/* Starts collapsed */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-gray-900 dark:text-white">Starts collapsed</label>
-                <Select value={startsCollapsed} onValueChange={setStartsCollapsed}>
-                  <SelectTrigger className="w-48 bg-white dark:bg-black">
-                    <SelectValue />
-                    <ChevronDown className="h-4 w-4 ml-2" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="starts-collapsed">Starts collapsed</SelectItem>
-                    <SelectItem value="starts-expanded">Starts expanded</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-            </div>
-
-            {/* Embed code */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Embed code</h3>
-                <Video className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-              </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Add the following snippet to the pages where you want the conversation widget to be.
+            {readyKBs.length === 0 && !kbLoading && (
+              <p className="text-xs text-gray-500 dark:text-gray-500">
+                Create a knowledge base in <button type="button" onClick={() => router.push('/rag')} className="text-primary hover:underline">Knowledge Base</button>
               </p>
-              <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 font-mono text-sm relative">
-                <div className="flex items-center justify-between">
-                  <code className="text-gray-900 dark:text-white">
-                    {`<elevenlabs-convai agent-id="agent_0701k8frda6eezwvfkmzm9h0jp56"></elevenlabs-convai>`}
-                  </code>
-                  <button className="ml-4 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded">
-                    <Copy className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-
-            {/* Interface */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Interface</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Configure parts of the widget interface.
-              </p>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-900 dark:text-white">Chat (text-only) mode</span>
-                    <span className="px-2 py-0.5 text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded">New</span>
-                  </div>
-                  <button
-                    onClick={() => setChatTextOnly(!chatTextOnly)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                      chatTextOnly ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-700'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        chatTextOnly ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Appearance */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Appearance</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-                Customize the widget to best fit your website.
-              </p>
-              
-              {/* Variant */}
-              <div className="mb-6">
-                <label className="text-sm font-medium text-gray-900 dark:text-white mb-3 block">Variant</label>
-                <div className="flex gap-3">
-                  {['tiny', 'compact', 'full'].map((variant) => (
-                    <button
-                      key={variant}
-                      onClick={() => setWidgetVariant(variant)}
-                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        widgetVariant === variant
-                          ? 'bg-primary text-white shadow-lg shadow-primary/30'
-                          : 'bg-white dark:bg-black border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-primary/40'
-                      }`}
-                    >
-                      {variant.charAt(0).toUpperCase() + variant.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Placement */}
-              <div>
-                <label className="text-sm font-medium text-gray-900 dark:text-white mb-3 block">Placement</label>
-                <Select value={widgetPlacement} onValueChange={setWidgetPlacement}>
-                  <SelectTrigger className="w-full bg-white dark:bg-black">
-                    <SelectValue />
-                    <ChevronDown className="h-4 w-4 ml-2" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="bottom-right">Bottom-right</SelectItem>
-                    <SelectItem value="bottom-left">Bottom-left</SelectItem>
-                    <SelectItem value="top-right">Top-right</SelectItem>
-                    <SelectItem value="top-left">Top-left</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-                  The preview widget on this page is always placed in the bottom right corner of the screen. The placement you select here will only be used when the widget is embedded on your website.
-                </p>
-              </div>
-            </div>
-
-            {/* Avatar */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Avatar</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-                Configure the voice orb or provide your own avatar.
-              </p>
-              
-              {/* Avatar Type */}
-              <div className="mb-6">
-                <label className="text-sm font-medium text-gray-900 dark:text-white mb-3 block">Avatar Type</label>
-                <div className="flex gap-3">
-                  {['orb', 'link', 'image'].map((type) => (
-                    <button
-                      key={type}
-                      onClick={() => setAvatarType(type)}
-                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        avatarType === type
-                          ? 'bg-primary text-white shadow-lg shadow-primary/30'
-                          : 'bg-white dark:bg-black border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-primary/40'
-                      }`}
-                    >
-                      {type.charAt(0).toUpperCase() + type.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Color Pickers */}
-              {avatarType === 'orb' && (
-                <div className="flex gap-6">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full" style={{ background: `linear-gradient(135deg, ${firstColor} 0%, ${secondColor} 100%)` }} />
-                    <div>
-                      <label className="text-sm font-medium text-gray-900 dark:text-white mb-1 block">First color</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={firstColor}
-                          onChange={(e) => setFirstColor(e.target.value)}
-                          className="w-8 h-8 rounded border border-gray-300 dark:border-gray-700 cursor-pointer"
-                        />
-                        <Input
-                          type="text"
-                          value={firstColor}
-                          onChange={(e) => setFirstColor(e.target.value)}
-                          className="w-24 bg-white dark:bg-black text-sm"
-                        />
-                      </div>
+            )}
                     </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div>
-                      <label className="text-sm font-medium text-gray-900 dark:text-white mb-1 block">Second color</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={secondColor}
-                          onChange={(e) => setSecondColor(e.target.value)}
-                          className="w-8 h-8 rounded border border-gray-300 dark:border-gray-700 cursor-pointer"
-                        />
-                        <Input
-                          type="text"
-                          value={secondColor}
-                          onChange={(e) => setSecondColor(e.target.value)}
-                          className="w-24 bg-white dark:bg-black text-sm"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
 
-              {/* Image URL for Link type */}
-              {avatarType === 'link' && (
-                <div>
-                  <label className="text-sm font-medium text-gray-900 dark:text-white mb-2 block flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                      <Link className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                    </div>
-                    Image URL
-                  </label>
-                  <Input
-                    type="text"
-                    value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
-                    placeholder="https://example.com/avatar.png"
-                    className="bg-white dark:bg-black"
-                  />
-                </div>
-              )}
-
-              {/* Image Upload for Image type */}
-              {avatarType === 'image' && (
-                <div className="bg-white dark:bg-black border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-8">
-                  <div className="flex items-start gap-4">
-                    <div className="w-20 h-20 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
-                      <Upload className="h-8 w-8 text-gray-400" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">
-                        Click or drag a file to upload
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-500">
-                        Recommended resolution: 172 x 172 pixels.
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-500">
-                        Maximum size: 2MB.
-                      </p>
-                    </div>
-                  </div>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    id="avatar-upload"
-                  />
-                  <label
-                    htmlFor="avatar-upload"
-                    className="cursor-pointer block mt-4"
-                  >
-                    <Button variant="outline" type="button">
-                      Select File
+          {/* Submit Button */}
+          <div className="flex gap-3 pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => router.back()}
+              className="flex-1"
+            >
+              Cancel
                     </Button>
-                  </label>
-                </div>
+            <Button
+              type="submit"
+              disabled={isSubmitting || !isAuthReady || !name.trim() || !systemPrompt.trim()}
+              className="flex-1 bg-primary hover:bg-primary/90 text-white"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                'Create Agent'
               )}
+            </Button>
             </div>
-
-            {/* Theme */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Theme</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Modify the colors and style of your widget.
-                  </p>
-                </div>
-                <ChevronUp className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-              </div>
-              
-              {/* Theme Colors */}
-              <div className="space-y-3 mb-6">
-                {Object.entries(themeColors).map(([key, value]) => (
-                  <div key={key} className="flex items-center justify-between">
-                    <label className="text-sm text-gray-900 dark:text-white">{key}</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={value}
-                        onChange={(e) => setThemeColors(prev => ({ ...prev, [key]: e.target.value }))}
-                        className="w-8 h-8 rounded border border-gray-300 dark:border-gray-700 cursor-pointer"
-                      />
-                      <Input
-                        type="text"
-                        value={value}
-                        onChange={(e) => setThemeColors(prev => ({ ...prev, [key]: e.target.value }))}
-                        className="w-32 bg-white dark:bg-black text-sm"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Theme Radius/Padding */}
-              <div className="space-y-3">
-                {Object.entries(themeRadius).map(([key, value]) => (
-                  <div key={key} className="flex items-center justify-between">
-                    <label className="text-sm text-gray-900 dark:text-white">{key}</label>
-                    <Input
-                      type="text"
-                      value={value}
-                      onChange={(e) => setThemeRadius(prev => ({ ...prev, [key]: e.target.value }))}
-                      className="w-32 bg-white dark:bg-black text-sm"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Text contents */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Text contents</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Modify the text displayed in the widget.
-                  </p>
-                </div>
-                <ChevronUp className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-              </div>
-              
-              <div className="space-y-3">
-                {Object.entries(textContents).map(([key, value]) => (
-                  <div key={key} className="flex items-center justify-between gap-4">
-                    <label className="text-sm text-gray-700 dark:text-gray-300 flex-shrink-0 w-1/3">{key}</label>
-                    <Input
-                      type="text"
-                      value={value}
-                      onChange={(e) => setTextContents(prev => ({ ...prev, [key]: e.target.value }))}
-                      className="flex-1 bg-white dark:bg-black text-sm"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Terms and conditions */}
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
-              <div className="flex items-start justify-between gap-4 mb-4">
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Terms and conditions</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Require the caller to accept your terms and conditions before initiating a call.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setEnableTerms(!enableTerms)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
-                    enableTerms ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-700'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      enableTerms ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {enableTerms && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium text-gray-900 dark:text-white mb-2 block">Terms content</label>
-                    <Textarea
-                      value={termsContent}
-                      onChange={(e) => setTermsContent(e.target.value)}
-                      className="min-h-[150px] bg-white dark:bg-black font-mono text-sm"
-                    />
-                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-                      You can use <a href="#" className="text-primary hover:underline">Markdown</a> to format the text.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-gray-900 dark:text-white mb-2 block">Local storage key</label>
-                    <Input
-                      type="text"
-                      value={localStorageKey}
-                      onChange={(e) => setLocalStorageKey(e.target.value)}
-                      placeholder="e.g. terms_accepted"
-                      className="bg-white dark:bg-black"
-                    />
-                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-                      When defined, the widget will store the acceptance status in the local storage under this key. The user will not be prompted to accept the terms again if the key is present.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
+        </form>
           </div>
-        )}
-                </div>
-      </div>
-
-      {/* Test Agent Modal */}
-      {currentAgent?.id && currentAgent?.status === 'active' && (
-        <CreateCallModal
-          isOpen={showTestModal}
-          onClose={() => setShowTestModal(false)}
-          onCreateCall={handleCreateTestCall}
-          agents={[currentAgent]}
-          isLoading={createCallMutation.isPending}
-        />
-      )}
     </AppLayout>
   )
 }

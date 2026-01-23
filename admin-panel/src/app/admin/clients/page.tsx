@@ -55,7 +55,15 @@ export default function ClientsPage() {
         setTiers(tiersMap)
       }
     } catch (error) {
-      console.error('Error loading tiers:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ADMIN] [CLIENTS] Error loading tiers (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
     }
   }
 
@@ -69,7 +77,15 @@ export default function ClientsPage() {
       if (error) throw error
       setClients(data || [])
     } catch (error) {
-      console.error('Error loading clients:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ADMIN] [CLIENTS] Error loading clients (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
     } finally {
       setIsLoading(false)
     }
@@ -101,7 +117,17 @@ export default function ClientsPage() {
       setEditingClient(null)
       setMinutesOverride(null)
     } catch (error) {
-      console.error('Error saving client:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ADMIN] [CLIENTS] Error saving client (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        clientId,
+        minutesOverride,
+      })
       alert('Failed to update client. Please try again.')
     } finally {
       setSaving(null)

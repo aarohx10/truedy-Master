@@ -88,8 +88,17 @@ export default function BillingPage() {
       const { clientSecret: secret } = await response.json()
       setClientSecret(secret)
     } catch (error: any) {
-      console.error('Error creating payment intent:', error)
-      alert(error.message || 'Failed to initialize payment')
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[BILLING_PAGE] Error creating payment intent (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCode: error.code,
+        errorType: error.type,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      alert(rawError.message || 'Failed to initialize payment')
       setPaymentDialogOpen(false)
     } finally {
       setIsCreatingIntent(false)
@@ -105,7 +114,14 @@ export default function BillingPage() {
         const credits = response.data?.credits_balance || response.data?.client?.credits_balance || 0
         setCreditsBalance(credits)
       } catch (error) {
-        console.error('Error fetching credits:', error)
+        const rawError = error instanceof Error ? error : new Error(String(error))
+        console.error('[BILLING_PAGE] Error fetching credits (RAW ERROR)', {
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          errorName: rawError.name,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        })
         setCreditsBalance(0)
       }
     }

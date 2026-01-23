@@ -31,7 +31,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       const response = await apiClient.get<Agent[]>(endpoints.agents.list)
       set({ agents: response.data, isLoading: false })
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[AGENT_STORE] Error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -42,7 +50,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       const response = await apiClient.get<Agent>(endpoints.agents.get(id))
       set({ selectedAgent: response.data, isLoading: false })
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[AGENT_STORE] Error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -57,7 +73,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       }))
       return response.data
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[AGENT_STORE] Error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -79,7 +103,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       }))
       return response.data
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[AGENT_STORE] Error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -94,7 +126,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         isLoading: false,
       }))
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[AGENT_STORE] Error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -135,7 +175,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       })
       set({ isLoading: false })
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[AGENT_STORE] Error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },

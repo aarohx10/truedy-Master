@@ -34,6 +34,311 @@ router = APIRouter()
 # Presign endpoint removed - using direct multipart upload instead
 
 
+@router.post("/clone")
+async def clone_voice(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    x_client_id: Optional[str] = Header(None),
+):
+    """
+    Muscular voice cloning endpoint: File Upload → ElevenLabs Clone → Ultravox Sync → Supabase Record
+    
+    FormData (multipart/form-data):
+    - name: Voice name (required)
+    - file: Audio file (MP3, WAV, etc.) - required
+    
+    Returns immediately with voice record. Processing happens synchronously.
+    """
+    client_id = current_user.get("client_id")
+    user_id = current_user.get("user_id")
+    
+    if current_user["role"] not in ["client_admin", "agency_admin"]:
+        raise ForbiddenError("Insufficient permissions")
+    
+    # Validate API keys
+    if not settings.ELEVENLABS_API_KEY:
+        raise ValidationError("ElevenLabs API key is not configured")
+    if not settings.ULTRAVOX_API_KEY:
+        raise ValidationError("Ultravox API key is not configured")
+    
+    db = DatabaseService(current_user["token"])
+    db.set_auth(current_user["token"])
+    
+    # Parse multipart form data
+    form = await request.form()
+    name = form.get("name")
+    file_item = form.get("file")
+    
+    if not name:
+        raise ValidationError("Voice name is required")
+    if not file_item or not isinstance(file_item, UploadFile):
+        raise ValidationError("Audio file is required")
+    
+    # Validate file
+    filename = file_item.filename or ""
+    content_type = file_item.content_type or ""
+    valid_extensions = ['.wav', '.mp3', '.mpeg', '.webm', '.ogg', '.m4a', '.aac', '.flac']
+    
+    if not content_type.startswith('audio/') and not any(filename.lower().endswith(ext) for ext in valid_extensions):
+        raise ValidationError(f"Invalid file type: {filename}. Only audio files are allowed.")
+    
+    # Read file content
+    audio_content = await file_item.read()
+    file_size = len(audio_content)
+    
+    if file_size > 10 * 1024 * 1024:
+        raise ValidationError(f"File {filename} exceeds 10MB limit")
+    
+    if file_size == 0:
+        raise ValidationError("File is empty")
+    
+    # Credit check
+    client = db.get_client(client_id)
+    if not client or client.get("credits_balance", 0) < 50:
+        raise PaymentRequiredError(
+            "Insufficient credits for voice cloning. Required: 50",
+            {"required": 50, "available": client.get("credits_balance", 0) if client else 0},
+        )
+    
+    # Create voice record first
+    voice_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    voice_db_record = {
+        "id": voice_id,
+        "client_id": client_id,
+        "user_id": user_id,
+        "name": name,
+        "provider": "elevenlabs",
+        "type": "custom",
+        "language": "en-US",
+        "status": "creating",
+        "training_info": {
+            "progress": 0,
+            "started_at": now.isoformat(),
+        },
+        "created_at": now.isoformat(),
+        "updated_at": now.isoformat(),
+    }
+    
+    db.insert("voices", voice_db_record)
+    logger.info(f"[VOICES] [CLONE] Voice record created | voice_id={voice_id} | name={name}")
+    
+    try:
+        # Action A: Direct HTTP POST to ElevenLabs
+        logger.info(f"[VOICES] [CLONE] Starting ElevenLabs clone | voice_id={voice_id}")
+        elevenlabs_url = "https://api.elevenlabs.io/v1/voices/add"
+        
+        async with httpx.AsyncClient(timeout=120.0) as http_client:
+            files = [("files", (filename, audio_content, content_type or "audio/mpeg"))]
+            data = {"name": name}
+            
+            elevenlabs_response = await http_client.post(
+                elevenlabs_url,
+                headers={"xi-api-key": settings.ELEVENLABS_API_KEY},
+                data=data,
+                files=files,
+            )
+            
+            if elevenlabs_response.status_code >= 400:
+                error_text = elevenlabs_response.text[:500] if elevenlabs_response.text else "No response body"
+                import json
+                error_details_raw = {
+                    "status_code": elevenlabs_response.status_code,
+                    "status_text": elevenlabs_response.reason_phrase if hasattr(elevenlabs_response, 'reason_phrase') else None,
+                    "error_text": error_text,
+                    "full_response_text": elevenlabs_response.text if elevenlabs_response.text else None,
+                    "response_headers": dict(elevenlabs_response.headers) if hasattr(elevenlabs_response, 'headers') else None,
+                    "request_url": elevenlabs_url,
+                    "request_method": "POST",
+                    "voice_id": voice_id,
+                    "name": name,
+                    "filename": filename,
+                    "file_size": file_size,
+                }
+                logger.error(f"[VOICES] [CLONE] ElevenLabs error (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
+                raise ProviderError(
+                    provider="elevenlabs",
+                    message=f"ElevenLabs voice cloning failed: {error_text}",
+                    http_status=elevenlabs_response.status_code,
+                )
+            
+            elevenlabs_data = elevenlabs_response.json()
+            elevenlabs_voice_id = elevenlabs_data.get("voice_id")
+            
+            if not elevenlabs_voice_id:
+                raise ProviderError(
+                    provider="elevenlabs",
+                    message="ElevenLabs response missing voice_id",
+                    http_status=500,
+                )
+        
+        logger.info(f"[VOICES] [CLONE] ElevenLabs clone completed | voice_id={voice_id} | elevenlabs_voice_id={elevenlabs_voice_id}")
+        
+        # Action B: Direct HTTP POST to Ultravox
+        logger.info(f"[VOICES] [CLONE] Starting Ultravox sync | voice_id={voice_id} | elevenlabs_voice_id={elevenlabs_voice_id}")
+        
+        # Normalize name for Ultravox
+        normalized_name = name.lower().replace(" ", "_").replace("-", "_")
+        normalized_name = "".join(c if c.isalnum() or c == "_" else "" for c in normalized_name)
+        
+        ultravox_url = f"{settings.ULTRAVOX_BASE_URL.rstrip('/')}/api/voices"
+        ultravox_payload = {
+            "name": normalized_name,
+            "description": f"Cloned voice: {name}",
+            "definition": {
+                "elevenLabs": {
+                    "voiceId": elevenlabs_voice_id,
+                    "model": "eleven_multilingual_v2",
+                    "stability": 0.5,
+                    "similarityBoost": 0.75,
+                    "style": 0.0,
+                    "useSpeakerBoost": True,
+                    "speed": 1.0,
+                }
+            }
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as http_client:
+            ultravox_response = await http_client.post(
+                ultravox_url,
+                headers={
+                    "X-API-Key": settings.ULTRAVOX_API_KEY,
+                    "Content-Type": "application/json",
+                },
+                json=ultravox_payload,
+            )
+            
+            if ultravox_response.status_code >= 400:
+                error_text = ultravox_response.text[:500] if ultravox_response.text else "No response body"
+                import json
+                error_details_raw = {
+                    "status_code": ultravox_response.status_code,
+                    "status_text": ultravox_response.reason_phrase if hasattr(ultravox_response, 'reason_phrase') else None,
+                    "error_text": error_text,
+                    "full_response_text": ultravox_response.text if ultravox_response.text else None,
+                    "response_headers": dict(ultravox_response.headers) if hasattr(ultravox_response, 'headers') else None,
+                    "request_url": ultravox_url,
+                    "request_method": "POST",
+                    "request_payload": ultravox_payload,
+                    "voice_id": voice_id,
+                    "name": name,
+                    "elevenlabs_voice_id": elevenlabs_voice_id,
+                }
+                logger.error(f"[VOICES] [CLONE] Ultravox error (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
+                
+                # Clean up ElevenLabs voice on Ultravox failure
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as cleanup_client:
+                        await cleanup_client.delete(
+                            f"https://api.elevenlabs.io/v1/voices/{elevenlabs_voice_id}",
+                            headers={"xi-api-key": settings.ELEVENLABS_API_KEY},
+                        )
+                except Exception as cleanup_error:
+                    import traceback
+                    cleanup_error_details = {
+                        "error_type": type(cleanup_error).__name__,
+                        "error_message": str(cleanup_error),
+                        "full_traceback": traceback.format_exc(),
+                        "elevenlabs_voice_id": elevenlabs_voice_id,
+                    }
+                    logger.error(f"[VOICES] [CLONE] Cleanup error (RAW ERROR): {json.dumps(cleanup_error_details, indent=2, default=str)}", exc_info=True)
+                
+                raise ProviderError(
+                    provider="ultravox",
+                    message=f"Ultravox sync failed: {error_text}",
+                    http_status=ultravox_response.status_code,
+                )
+            
+            ultravox_data = ultravox_response.json()
+            ultravox_voice_id = ultravox_data.get("voiceId") or ultravox_data.get("id")
+            
+            if not ultravox_voice_id:
+                raise ProviderError(
+                    provider="ultravox",
+                    message="Ultravox response missing voiceId",
+                    http_status=500,
+                )
+        
+        logger.info(f"[VOICES] [CLONE] Ultravox sync completed | voice_id={voice_id} | ultravox_voice_id={ultravox_voice_id}")
+        
+        # Action C: Update database record
+        update_data = {
+            "status": "active",
+            "provider_voice_id": elevenlabs_voice_id,
+            "ultravox_voice_id": ultravox_voice_id,
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        db.update("voices", {"id": voice_id}, update_data)
+        voice_db_record.update(update_data)
+        
+        # Deduct credits
+        db.update("clients", {"id": client_id}, {
+            "credits_balance": client.get("credits_balance", 0) - 50,
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        
+        logger.info(f"[VOICES] [CLONE] Voice cloning completed successfully | voice_id={voice_id} | name={name}")
+        
+        return {
+            "data": VoiceResponse(**voice_db_record),
+            "meta": ResponseMeta(request_id=str(uuid.uuid4()), ts=datetime.utcnow()),
+        }
+        
+    except (ProviderError, ValidationError, PaymentRequiredError):
+        # Log RAW error for known errors before re-raising
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(exc).__name__ if 'exc' in locals() else type(e).__name__ if 'e' in locals() else "Unknown",
+            "error_message": str(exc) if 'exc' in locals() else str(e) if 'e' in locals() else "Unknown",
+            "error_args": exc.args if 'exc' in locals() and hasattr(exc, 'args') else e.args if 'e' in locals() and hasattr(e, 'args') else None,
+            "error_dict": exc.__dict__ if 'exc' in locals() and hasattr(exc, '__dict__') else e.__dict__ if 'e' in locals() and hasattr(e, '__dict__') else None,
+            "full_traceback": traceback.format_exc(),
+            "voice_id": voice_id,
+            "name": name,
+            "filename": filename,
+            "file_size": file_size,
+        }
+        current_exc = exc if 'exc' in locals() else e if 'e' in locals() else None
+        if current_exc:
+            logger.error(f"[VOICES] [CLONE] Known error (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
+        # Re-raise known errors
+        raise
+    except Exception as e:
+        # Log RAW error with full details
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+            "error_module": getattr(e, '__module__', None),
+            "error_class": type(e).__name__,
+            "full_traceback": traceback.format_exc(),
+            "voice_id": voice_id,
+            "name": name,
+            "filename": filename,
+            "file_size": file_size,
+            "client_id": client_id,
+            "user_id": user_id,
+        }
+        logger.error(f"[VOICES] [CLONE] Unexpected error (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
+        
+        # Update voice status to failed
+        db.update("voices", {"id": voice_id}, {
+            "status": "failed",
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        raise ProviderError(
+            provider="voice_cloning",
+            message=f"Voice cloning failed: {str(e)}",
+            http_status=500,
+        )
+
+
 async def _process_voice_cloning(
     voice_id: str,
     name: str,
@@ -101,13 +406,45 @@ async def _process_voice_cloning(
         logger.info(f"[VOICES] [BACKGROUND] Voice cloning completed successfully | voice_id={voice_id} | name={name}")
         
     except ProviderError as e:
-        logger.error(f"[VOICES] [BACKGROUND] Provider error | voice_id={voice_id} | error={str(e)}", exc_info=True)
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+            "full_traceback": traceback.format_exc(),
+            "voice_id": voice_id,
+            "name": name,
+            "user_id": user_id,
+            "client_id": client_id,
+            "audio_files_count": len(audio_files),
+        }
+        logger.error(f"[VOICES] [BACKGROUND] Provider error (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         db.update("voices", {"id": voice_id}, {
             "status": "failed",
             "updated_at": datetime.utcnow().isoformat(),
         })
     except Exception as e:
-        logger.error(f"[VOICES] [BACKGROUND] Unexpected error | voice_id={voice_id} | error={str(e)}", exc_info=True)
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+            "error_module": getattr(e, '__module__', None),
+            "error_class": type(e).__name__,
+            "full_traceback": traceback.format_exc(),
+            "voice_id": voice_id,
+            "name": name,
+            "user_id": user_id,
+            "client_id": client_id,
+            "audio_files_count": len(audio_files),
+        }
+        logger.error(f"[VOICES] [BACKGROUND] Unexpected error (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         db.update("voices", {"id": voice_id}, {
             "status": "failed",
             "updated_at": datetime.utcnow().isoformat(),
@@ -319,6 +656,19 @@ async def create_voice(
                 return response_data
                 
             except Exception as e:
+                import traceback
+                import json
+                error_details_raw = {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "error_args": e.args if hasattr(e, 'args') else None,
+                    "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                    "full_traceback": traceback.format_exc(),
+                    "voice_id": voice_id,
+                    "name": name,
+                    "strategy": strategy,
+                }
+                logger.error(f"[VOICES] [CREATE] Error in native voice creation (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
                 db.delete("voices", {"id": voice_id})
                 raise
     
@@ -328,6 +678,17 @@ async def create_voice(
             body = await request.json()
             voice_data = VoiceCreate(**body)
         except Exception as e:
+            import traceback
+            import json
+            error_details_raw = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "error_args": e.args if hasattr(e, 'args') else None,
+                "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                "full_traceback": traceback.format_exc(),
+                "content_type": content_type,
+            }
+            logger.error(f"[VOICES] [CREATE] Invalid request body (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
             raise ValidationError(f"Invalid request body: {str(e)}")
         
         # Check idempotency key
@@ -514,20 +875,52 @@ async def create_voice(
                 voice_db_record.update(update_data)
         
         except Exception as e:
+            import traceback
+            import json
+            error_details_raw = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "error_args": e.args if hasattr(e, 'args') else None,
+                "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                "full_traceback": traceback.format_exc(),
+                "voice_id": voice_id,
+                "client_id": client_id,
+                "elevenlabs_voice_id": elevenlabs_voice_id if 'elevenlabs_voice_id' in locals() else None,
+            }
+            logger.error(f"[VOICES] [CREATE] Error in voice creation (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
+            
             # Rollback: Delete temporary record
             db.delete("voices", {"id": voice_id, "client_id": client_id})
             
             # Clean up ElevenLabs voice if created
-            if elevenlabs_voice_id:
+            if 'elevenlabs_voice_id' in locals() and elevenlabs_voice_id:
                 try:
                     await elevenlabs_client.delete_voice(elevenlabs_voice_id)
-                except Exception:
-                    pass  # Ignore cleanup errors
+                except Exception as cleanup_error:
+                    cleanup_error_details = {
+                        "error_type": type(cleanup_error).__name__,
+                        "error_message": str(cleanup_error),
+                        "full_traceback": traceback.format_exc(),
+                        "elevenlabs_voice_id": elevenlabs_voice_id,
+                    }
+                    logger.error(f"[VOICES] [CREATE] Cleanup error (RAW ERROR): {json.dumps(cleanup_error_details, indent=2, default=str)}", exc_info=True)
             
             # Re-raise appropriate error
             if isinstance(e, (ValidationError, NotFoundError, PaymentRequiredError, ProviderError)):
                 raise
-            logger.error(f"[VOICES] [CREATE] Failed to create voice: {e}", exc_info=True)
+            import traceback
+            import json
+            error_details_raw = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "error_args": e.args if hasattr(e, 'args') else None,
+                "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                "full_traceback": traceback.format_exc(),
+                "voice_id": voice_id,
+                "client_id": client_id,
+                "provider": provider,
+            }
+            logger.error(f"[VOICES] [CREATE] Failed to create voice (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
             raise ProviderError(provider=provider, message=str(e), http_status=500)
         
         # Prepare response record
@@ -645,7 +1038,18 @@ async def list_voices(
                     
                     voices_data.append(VoiceResponse(**voice_data))
                 except Exception as e:
-                    logger.warning(f"[VOICES] [LIST] Failed to process custom voice {voice_record.get('id')}: {e}")
+                    import traceback
+                    import json
+                    error_details_raw = {
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                        "error_args": e.args if hasattr(e, 'args') else None,
+                        "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                        "full_traceback": traceback.format_exc(),
+                        "voice_id": voice_record.get('id'),
+                        "voice_record": voice_record,
+                    }
+                    logger.warning(f"[VOICES] [LIST] Failed to process custom voice (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
                     continue
             
             return {
@@ -706,7 +1110,18 @@ async def list_voices(
                     
                     voices_data.append(VoiceResponse(**voice_data))
                 except Exception as e:
-                    logger.warning(f"[VOICES] [LIST] Failed to process voice {uv_voice.get('voiceId')}: {e}")
+                    import traceback
+                    import json
+                    error_details_raw = {
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                        "error_args": e.args if hasattr(e, 'args') else None,
+                        "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                        "full_traceback": traceback.format_exc(),
+                        "ultravox_voice_id": uv_voice.get('voiceId'),
+                        "ultravox_voice": uv_voice,
+                    }
+                    logger.warning(f"[VOICES] [LIST] Failed to process voice (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
                     continue
             
             return {
@@ -715,10 +1130,36 @@ async def list_voices(
             }
     
     except ProviderError as e:
-        logger.error(f"[VOICES] [LIST] Ultravox API Error: {e}")
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+            "full_traceback": traceback.format_exc(),
+            "client_id": client_id,
+            "source": source,
+        }
+        logger.error(f"[VOICES] [LIST] Ultravox API Error (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         return {"data": [], "meta": ResponseMeta(request_id=str(uuid.uuid4()), ts=now)}
     except Exception as e:
-        logger.error(f"[VOICES] [LIST] Error: {e}", exc_info=True)
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+            "error_module": getattr(e, '__module__', None),
+            "error_class": type(e).__name__,
+            "full_traceback": traceback.format_exc(),
+            "client_id": client_id,
+            "source": source,
+        }
+        logger.error(f"[VOICES] [LIST] Error (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         return {"data": [], "meta": ResponseMeta(request_id=str(uuid.uuid4()), ts=now)}
 
 
@@ -815,7 +1256,18 @@ async def sync_voices_from_ultravox(
                 db.insert("voices", voice_record)
                 imported_count += 1
             except Exception as e:
-                logger.warning(f"[VOICES] [SYNC] Failed to import voice {uv_voice.get('voiceId')}: {e}")
+                import traceback
+                import json
+                error_details_raw = {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "error_args": e.args if hasattr(e, 'args') else None,
+                    "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                    "full_traceback": traceback.format_exc(),
+                    "ultravox_voice_id": uv_voice.get('voiceId'),
+                    "ultravox_voice": uv_voice,
+                }
+                logger.warning(f"[VOICES] [SYNC] Failed to import voice (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
                 errors.append({
                     "voice_id": uv_voice.get("voiceId"),
                     "name": uv_voice.get("name"),
@@ -833,7 +1285,22 @@ async def sync_voices_from_ultravox(
             "meta": ResponseMeta(request_id=str(uuid.uuid4()), ts=datetime.utcnow()),
         }
     except Exception as e:
-        logger.error(f"[VOICES] [SYNC] Failed to sync voices: {e}", exc_info=True)
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+            "error_module": getattr(e, '__module__', None),
+            "error_class": type(e).__name__,
+            "full_traceback": traceback.format_exc(),
+            "client_id": client_id,
+            "ownership": ownership,
+            "provider": provider,
+        }
+        logger.error(f"[VOICES] [SYNC] Failed to sync voices (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         raise ValidationError(f"Failed to sync voices from Ultravox: {str(e)}")
 
 
@@ -860,7 +1327,19 @@ async def get_voice(
     except NotFoundError:
         raise
     except Exception as e:
-        logger.error(f"[VOICES] [GET] Failed to get voice {voice_id}: {e}", exc_info=True)
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+            "full_traceback": traceback.format_exc(),
+            "voice_id": voice_id,
+            "client_id": current_user.get("client_id"),
+        }
+        logger.error(f"[VOICES] [GET] Failed to get voice (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         raise
 
 
@@ -938,7 +1417,18 @@ async def delete_voice(
                 # For now, we'll just delete from our database
                 logger.info(f"Voice {voice_id} has Ultravox ID {voice.get('ultravox_voice_id')}, but Ultravox deletion not implemented")
         except Exception as e:
-            logger.warning(f"Failed to handle Ultravox deletion for voice {voice_id}: {e}")
+            import traceback
+            import json
+            error_details_raw = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "error_args": e.args if hasattr(e, 'args') else None,
+                "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                "full_traceback": traceback.format_exc(),
+                "voice_id": voice_id,
+                "ultravox_voice_id": voice.get("ultravox_voice_id"),
+            }
+            logger.warning(f"[VOICES] [DELETE] Failed to handle Ultravox deletion (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
     
     # Delete from database
     db.delete("voices", {"id": voice_id, "client_id": current_user["client_id"]})
@@ -1021,7 +1511,19 @@ async def sync_voice_with_ultravox(
                 "drift": drift,
             }
         except Exception as e:
-            logger.error(f"Failed to sync voice {voice_id} with Ultravox: {e}", exc_info=True)
+            import traceback
+            import json
+            error_details_raw = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "error_args": e.args if hasattr(e, 'args') else None,
+                "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+                "full_traceback": traceback.format_exc(),
+                "voice_id": voice_id,
+                "ultravox_voice_id": voice.get("ultravox_voice_id"),
+            }
+            logger.error(f"[VOICES] [SYNC] Failed to sync voice with Ultravox (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
             raise ValidationError(f"Failed to sync voice with Ultravox: {str(e)}", {"error": str(e)})
     
     # If voice doesn't have ultravox_voice_id, try to create it in Ultravox
@@ -1067,7 +1569,22 @@ async def sync_voice_with_ultravox(
             else:
                 raise ValidationError("Failed to create voice in Ultravox - response missing ID")
     except Exception as e:
-        logger.error(f"Failed to sync voice {voice_id} with Ultravox: {e}", exc_info=True)
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+            "error_module": getattr(e, '__module__', None),
+            "error_class": type(e).__name__,
+            "full_traceback": traceback.format_exc(),
+            "voice_id": voice_id,
+            "voice": voice,
+        }
+        logger.error(f"[VOICES] [SYNC] Failed to sync voice with Ultravox (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
+        
         error_msg = str(e)
         if "404" in error_msg:
             error_msg = "Ultravox API endpoint not found. Please check ULTRAVOX_BASE_URL and ULTRAVOX_API_KEY configuration."
@@ -1103,9 +1620,19 @@ async def preview_voice(
     
     try:
         voice = db.get_voice(voice_id, client_id)
-    except Exception as e:
-        # Voice not found in database - this is OK for Ultravox voices
-        logger.debug(f"[VOICES] [PREVIEW] Voice not found in database (may be Ultravox voice) | voice_id={voice_id} | error={str(e)} | request_id={request_id}")
+        except Exception as e:
+            import traceback
+            import json
+            error_details_raw = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "error_args": e.args if hasattr(e, 'args') else None,
+                "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                "full_traceback": traceback.format_exc(),
+                "voice_id": voice_id,
+                "request_id": request_id,
+            }
+            logger.debug(f"[VOICES] [PREVIEW] Voice not found in database (may be Ultravox voice) (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}")
     
     if voice:
         # Voice exists in database - use ultravox_voice_id if available
@@ -1158,8 +1685,23 @@ async def preview_voice(
             }
         )
     except ProviderError as e:
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+            "http_status": e.http_status if hasattr(e, 'http_status') else None,
+            "provider": e.provider if hasattr(e, 'provider') else None,
+            "full_traceback": traceback.format_exc(),
+            "ultravox_voice_id": ultravox_voice_id,
+            "request_id": request_id,
+            "voice_id": voice_id,
+        }
         error_msg = f"Failed to get voice preview from Ultravox: {str(e)}"
-        logger.error(f"[VOICES] [PREVIEW] {error_msg} | ultravox_voice_id={ultravox_voice_id} | request_id={request_id}", exc_info=True)
+        logger.error(f"[VOICES] [PREVIEW] Provider error (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         # Return proper HTTP error instead of ValidationError for API errors
         http_status = e.http_status if hasattr(e, "http_status") else 500
         raise HTTPException(
@@ -1171,14 +1713,42 @@ async def preview_voice(
             }
         )
     except ValidationError as e:
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_traceback": traceback.format_exc(),
+            "ultravox_voice_id": ultravox_voice_id,
+            "request_id": request_id,
+            "voice_id": voice_id,
+        }
+        logger.error(f"[VOICES] [PREVIEW] Validation error (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         # Re-raise ValidationError as-is (it's already a proper HTTP exception)
         raise
     except HTTPException:
         # Re-raise HTTPException as-is
         raise
     except Exception as e:
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_error_object": json.dumps(e.__dict__, default=str) if hasattr(e, '__dict__') else str(e),
+            "error_module": getattr(e, '__module__', None),
+            "error_class": type(e).__name__,
+            "full_traceback": traceback.format_exc(),
+            "ultravox_voice_id": ultravox_voice_id,
+            "request_id": request_id,
+            "voice_id": voice_id,
+        }
         error_msg = f"Failed to generate voice preview: {str(e)}"
-        logger.error(f"[VOICES] [PREVIEW] {error_msg} | ultravox_voice_id={ultravox_voice_id} | request_id={request_id}", exc_info=True)
+        logger.error(f"[VOICES] [PREVIEW] Unexpected error (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={

@@ -30,7 +30,16 @@ export async function POST(request: NextRequest) {
     try {
       token = generateToken(username)
     } catch (error: any) {
-      console.error('Error generating token:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ADMIN] [VERIFY_OTP] Error generating token (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        email,
+      })
       return NextResponse.json(
         { error: 'Authentication configuration error' },
         { status: 500 }
@@ -49,7 +58,15 @@ export async function POST(request: NextRequest) {
 
     return response
   } catch (error: any) {
-    console.error('Verify OTP error:', error)
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[ADMIN] [VERIFY_OTP] Verify OTP error (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      errorCause: (rawError as any).cause,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+    })
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

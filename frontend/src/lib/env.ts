@@ -90,7 +90,14 @@ if (typeof window === 'undefined') {
   try {
     validateEnvVars()
   } catch (error) {
-    console.error('Environment validation failed:', error)
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[ENV] Environment validation failed (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+    })
     // Don't throw during build - let it continue
   }
 }

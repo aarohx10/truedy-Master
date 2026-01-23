@@ -252,34 +252,41 @@ export default function VoiceCloningPage() {
         throw new Error('Failed to start audio playback. Please check your browser audio settings.')
       }
     } catch (error) {
-      console.error('Error in handlePlayVoice:', error)
+      // Log RAW error with full details
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[VOICE_PREVIEW] Error in handlePlayVoice (RAW ERROR)', {
+        voiceId: voice.id,
+        voiceName: voice.name,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      
       setPlayingVoiceId(null)
       
-      let errorMessage = 'Failed to generate voice preview.'
+      let errorMessage = rawError.message || 'Failed to generate voice preview.'
       let errorTitle = 'Preview failed'
       
-      if (error instanceof Error) {
-        errorMessage = error.message
-        console.error('Error details:', errorMessage)
-        
-        // Check for specific error types
-        if (errorMessage.includes('Ultravox API key') || errorMessage.includes('not configured')) {
-          errorTitle = 'Ultravox Configuration Error'
-          errorMessage = 'Ultravox API key is not configured. Please contact support.'
-        } else if (errorMessage.includes('404') || errorMessage.includes('not found')) {
-          errorTitle = 'Voice Not Found'
-          errorMessage = 'The voice was not found. Please verify the voice ID is correct.'
-        } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network')) {
-          errorTitle = 'Network Error'
-          errorMessage = 'Failed to connect to the server. Please check your internet connection and try again.'
-        }
+      // Check for specific error types
+      if (errorMessage.includes('Ultravox API key') || errorMessage.includes('not configured')) {
+        errorTitle = 'Ultravox Configuration Error'
+        errorMessage = 'Ultravox API key is not configured. Please contact support.'
+      } else if (errorMessage.includes('404') || errorMessage.includes('not found')) {
+        errorTitle = 'Voice Not Found'
+        errorMessage = 'The voice was not found. Please verify the voice ID is correct.'
+      } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network')) {
+        errorTitle = 'Network Error'
+        errorMessage = 'Failed to connect to the server. Please check your internet connection and try again.'
       }
       
       toast({
         title: errorTitle,
         description: errorMessage,
         variant: 'destructive',
-        duration: 8000,
+        duration: 10000, // Show longer for debugging
       })
     }
   }, [playingVoiceId, audioElement, toast])

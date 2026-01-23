@@ -57,7 +57,18 @@ export class AuthErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('[AuthErrorBoundary] Caught error:', error, errorInfo)
+    // Log RAW error with full details
+    console.error('[AuthErrorBoundary] Caught error (RAW ERROR)', {
+      error,
+      errorMessage: error.message,
+      errorStack: error.stack,
+      errorName: error.name,
+      errorCause: (error as any).cause,
+      fullErrorObject: JSON.stringify(error, Object.getOwnPropertyNames(error), 2),
+      errorInfo,
+      errorInfoComponentStack: errorInfo.componentStack,
+      errorInfoErrorBoundary: errorInfo.errorBoundary,
+    })
     
     // Attempt automatic recovery if not already tried
     if (!this.state.recoveryAttempted) {
@@ -85,7 +96,15 @@ export class AuthErrorBoundary extends Component<Props, State> {
         this.setState({ isRecovering: false })
       }
     } catch (refreshError) {
-      console.error('[AuthErrorBoundary] Token refresh failed:', refreshError)
+      const rawError = refreshError instanceof Error ? refreshError : new Error(String(refreshError))
+      console.error('[AuthErrorBoundary] Token refresh failed (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
       this.setState({ isRecovering: false })
     }
   }
@@ -106,7 +125,15 @@ export class AuthErrorBoundary extends Component<Props, State> {
         window.location.href = '/signin'
       }
     } catch (error) {
-      console.error('[AuthErrorBoundary] Sign out failed:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[AuthErrorBoundary] Sign out failed (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
     }
   }
 

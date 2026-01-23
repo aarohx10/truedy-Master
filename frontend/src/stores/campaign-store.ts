@@ -38,7 +38,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       const response = await apiClient.get<Campaign[]>(endpoints.campaigns.list)
       set({ campaigns: response.data, isLoading: false })
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CAMPAIGN_STORE] fetchCampaigns error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -49,7 +57,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       const response = await apiClient.get<Campaign>(endpoints.campaigns.get(id))
       set({ selectedCampaign: response.data, isLoading: false })
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CAMPAIGN_STORE] fetchCampaigns error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -67,7 +83,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       }))
       return response.data
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CAMPAIGN_STORE] fetchCampaigns error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -91,7 +115,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       }))
       return response.data
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CAMPAIGN_STORE] fetchCampaigns error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -107,7 +139,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         isLoading: false,
       }))
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CAMPAIGN_STORE] fetchCampaigns error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -133,7 +173,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         isLoading: false,
       }))
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CAMPAIGN_STORE] fetchCampaigns error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -155,7 +203,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         isLoading: false,
       }))
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CAMPAIGN_STORE] fetchCampaigns error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -177,7 +233,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         isLoading: false,
       }))
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CAMPAIGN_STORE] fetchCampaigns error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -199,7 +263,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         isLoading: false,
       }))
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CAMPAIGN_STORE] fetchCampaigns error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },
@@ -213,7 +285,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       set({ isLoading: false })
       return response.data
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false })
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CAMPAIGN_STORE] fetchCampaigns error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      set({ error: rawError.message, isLoading: false })
       throw error
     }
   },

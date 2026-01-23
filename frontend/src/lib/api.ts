@@ -170,7 +170,23 @@ class ApiClient {
       })
     } catch (error) {
       // Handle network errors (CORS, connection refused, etc.)
-      const errorMessage = error instanceof Error ? error.message : 'Network error'
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      const errorMessage = rawError.message || 'Network error'
+      
+      // Log RAW network error
+      console.error('[API_REQUEST] Network error (RAW)', {
+        url,
+        method,
+        endpoint,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        currentOrigin: typeof window !== 'undefined' ? window.location.origin : 'unknown',
+        backendUrl: this.baseUrl,
+      })
       
       // Comprehensive CORS error detection
       const isCorsError = 
@@ -188,13 +204,16 @@ class ApiClient {
       
       if (isCorsError) {
         // Log detailed CORS error info
-        console.error('[CORS ERROR] Request blocked by CORS policy', {
+        console.error('[CORS ERROR] Request blocked by CORS policy (RAW)', {
           url,
           method,
           endpoint,
           currentOrigin,
           backendUrl: this.baseUrl,
-          errorMessage,
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
           suggestion: 'The backend needs to allow this origin in its CORS configuration',
         })
         
@@ -206,14 +225,15 @@ class ApiClient {
         })
         
         // Provide actionable error message
-        throw new Error(
+        const corsError = new Error(
           `CORS Error: The backend at ${this.baseUrl} is not allowing requests from ${currentOrigin}. ` +
           `This is a backend configuration issue. ` +
           `Please ensure the origin "${currentOrigin}" is added to the backend's CORS allowed origins.`
         )
+        throw corsError
       }
       
-      debugLogger.logError('API_REQUEST', error instanceof Error ? error : new Error(errorMessage), {
+      debugLogger.logError('API_REQUEST', rawError, {
         method,
         endpoint,
         url,
@@ -262,11 +282,29 @@ class ApiClient {
         throw new Error('Session expired. Please sign in again.')
       }
       
-      // Handle backend error format
+      // Handle backend error format - LOG RAW ERROR
       if ('error' in responseData) {
         const error = responseData.error
         const errorMessage = error.message || 'An error occurred'
         const errorDetails = error.details ? ` Details: ${JSON.stringify(error.details)}` : ''
+        
+        // Log RAW error to console
+        console.error('[API_REQUEST] Backend error (RAW)', {
+          endpoint,
+          url,
+          status: response.status,
+          statusText: response.statusText,
+          errorObject: error,
+          errorCode: error.code,
+          errorMessage: error.message,
+          errorDetails: error.details,
+          errorRequestId: error.request_id,
+          errorTs: error.ts,
+          fullErrorObject: JSON.stringify(error, null, 2),
+          fullResponseData: JSON.stringify(responseData, null, 2),
+          responseHeaders: Object.fromEntries(response.headers.entries()),
+        })
+        
         debugLogger.logError('API_ERROR', new Error(errorMessage), {
           status: response.status,
           endpoint,
@@ -274,6 +312,17 @@ class ApiClient {
         })
         throw new Error(`${errorMessage}${errorDetails}`)
       }
+      
+      // Log RAW error for non-standard error format
+      console.error('[API_REQUEST] Request failed (RAW ERROR)', {
+        endpoint,
+        url,
+        status: response.status,
+        statusText: response.statusText,
+        responseData,
+        fullResponseData: JSON.stringify(responseData, null, 2),
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+      })
       
       debugLogger.logError('API_ERROR', new Error(`Request failed with status ${response.status}`), {
         status: response.status,
@@ -449,13 +498,24 @@ class ApiClient {
   }
 
   async upload<T>(endpoint: string, formData: FormData): Promise<BackendResponse<T>> {
+    const startTime = performance.now()
     const token = authManager.getToken()
     const clientId = authManager.getClientId()
+    const url = `${this.baseUrl}${endpoint}`
+    
+    console.log('[API_UPLOAD] Starting upload request', {
+      endpoint,
+      url,
+      hasToken: !!token,
+      hasClientId: !!clientId,
+      formDataKeys: Array.from(formData.keys()),
+    })
     
     const headers: Record<string, string> = {}
 
     // Add request correlation ID
-    headers['X-Request-Id'] = this.generateRequestId()
+    const requestId = this.generateRequestId()
+    headers['X-Request-Id'] = requestId
 
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
@@ -465,41 +525,177 @@ class ApiClient {
       headers['x-client-id'] = clientId
     }
 
-    // No timeout needed - backend returns immediately and processes in background
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers,
-      body: formData,
-    })
+    let response: Response
+    try {
+      // No timeout needed - backend returns immediately and processes in background
+      response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: formData,
+      })
+      
+      console.log('[API_UPLOAD] Fetch completed', {
+        endpoint,
+        url,
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        headers: Object.fromEntries(response.headers.entries()),
+      })
+    } catch (networkError) {
+      const rawError = networkError instanceof Error ? networkError : new Error(String(networkError))
+      console.error('[API_UPLOAD] Network error (RAW)', {
+        endpoint,
+        url,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError)),
+      })
+      throw rawError
+    }
 
-    const responseData = await response.json().catch(() => ({})) as BackendResponse<T> | BackendError
+    let responseData: BackendResponse<T> | BackendError
+    try {
+      const responseText = await response.text()
+      console.log('[API_UPLOAD] Response text (RAW)', {
+        endpoint,
+        status: response.status,
+        responseText,
+        responseTextLength: responseText.length,
+      })
+      
+      responseData = responseText ? JSON.parse(responseText) : ({} as BackendResponse<T> | BackendError)
+    } catch (parseError) {
+      const rawParseError = parseError instanceof Error ? parseError : new Error(String(parseError))
+      console.error('[API_UPLOAD] JSON parse error (RAW)', {
+        endpoint,
+        status: response.status,
+        parseError: rawParseError,
+        errorMessage: rawParseError.message,
+        errorStack: rawParseError.stack,
+        fullErrorObject: JSON.stringify(rawParseError, Object.getOwnPropertyNames(rawParseError)),
+      })
+      responseData = {} as BackendResponse<T> | BackendError
+    }
+
+    const durationMs = Math.round(performance.now() - startTime)
+    console.log('[API_UPLOAD] Response data (RAW)', {
+      endpoint,
+      status: response.status,
+      durationMs,
+      responseData,
+      hasError: 'error' in responseData,
+      hasData: 'data' in responseData,
+    })
 
     if (!response.ok) {
       // Handle 401/403 - try to refresh and retry
       if (response.status === 401 || response.status === 403) {
+        console.log('[API_UPLOAD] Auth error, attempting token refresh', {
+          endpoint,
+          status: response.status,
+        })
+        
         const freshToken = await authManager.refreshToken()
         if (freshToken) {
+          console.log('[API_UPLOAD] Token refreshed, retrying request', {
+            endpoint,
+          })
+          
           // Retry with fresh token
           headers['Authorization'] = `Bearer ${freshToken}`
-          const retryResponse = await fetch(`${this.baseUrl}${endpoint}`, {
-            method: 'POST',
-            headers,
-            body: formData,
-          })
-          const retryData = await retryResponse.json().catch(() => ({})) as BackendResponse<T> | BackendError
-          if (retryResponse.ok) {
-            return retryData as BackendResponse<T>
+          try {
+            const retryResponse = await fetch(url, {
+              method: 'POST',
+              headers,
+              body: formData,
+            })
+            
+            const retryText = await retryResponse.text()
+            const retryData = retryText ? JSON.parse(retryText) : ({} as BackendResponse<T> | BackendError)
+            
+            console.log('[API_UPLOAD] Retry response (RAW)', {
+              endpoint,
+              status: retryResponse.status,
+              ok: retryResponse.ok,
+              retryData,
+            })
+            
+            if (retryResponse.ok) {
+              return retryData as BackendResponse<T>
+            }
+          } catch (retryError) {
+            const rawRetryError = retryError instanceof Error ? retryError : new Error(String(retryError))
+            console.error('[API_UPLOAD] Retry failed (RAW)', {
+              endpoint,
+              retryError: rawRetryError,
+              errorMessage: rawRetryError.message,
+              errorStack: rawRetryError.stack,
+              fullErrorObject: JSON.stringify(rawRetryError, Object.getOwnPropertyNames(rawRetryError)),
+            })
           }
         }
-        throw new Error('Session expired. Please sign in again.')
+        
+        const authError = new Error('Session expired. Please sign in again.')
+        console.error('[API_UPLOAD] Auth error final (RAW)', {
+          endpoint,
+          status: response.status,
+          error: authError,
+          responseData,
+        })
+        throw authError
       }
+      
+      // Log full error details
+      const errorDetails = {
+        endpoint,
+        url,
+        status: response.status,
+        statusText: response.statusText,
+        responseData,
+        hasErrorObject: 'error' in responseData,
+        errorObject: 'error' in responseData ? responseData.error : null,
+        fullResponseHeaders: Object.fromEntries(response.headers.entries()),
+      }
+      
+      console.error('[API_UPLOAD] Upload failed (RAW ERROR)', errorDetails)
       
       if ('error' in responseData) {
         const error = responseData.error
-        throw new Error(error.message || 'Upload failed')
+        const errorMessage = error.message || 'Upload failed'
+        const fullError = new Error(errorMessage)
+        
+        console.error('[API_UPLOAD] Backend error object (RAW)', {
+          endpoint,
+          errorObject: error,
+          errorCode: error.code,
+          errorMessage: error.message,
+          errorDetails: error.details,
+          errorRequestId: error.request_id,
+          errorTs: error.ts,
+          fullErrorObject: JSON.stringify(error, null, 2),
+        })
+        
+        throw fullError
       }
-      throw new Error('Upload failed')
+      
+      const genericError = new Error(`Upload failed with status ${response.status}`)
+      console.error('[API_UPLOAD] Generic upload error (RAW)', {
+        endpoint,
+        error: genericError,
+        responseData,
+      })
+      throw genericError
     }
+
+    console.log('[API_UPLOAD] Upload successful', {
+      endpoint,
+      durationMs,
+      responseData,
+    })
 
     return responseData as BackendResponse<T>
   }
@@ -550,6 +746,7 @@ export const endpoints = {
     create: '/kb',
     update: (id: string) => `/kb/${id}`,
     delete: (id: string) => `/kb/${id}`,
+    addContent: (id: string) => `/kb/${id}/add-content`,
     presign: (id: string) => `/kb/${id}/files/presign`,
     ingest: (id: string) => `/kb/${id}/files/ingest`,
   },
@@ -587,6 +784,20 @@ export const endpoints = {
     create: '/tools',
     update: (id: string) => `/tools/${id}`,
     delete: (id: string) => `/tools/${id}`,
+  },
+  
+  // Contacts
+  contacts: {
+    list: '/contacts',
+    get: (id: string) => `/contacts/${id}`,
+    create: '/contacts',
+    update: (id: string) => `/contacts/${id}`,
+    delete: (id: string) => `/contacts/${id}`,
+    folders: {
+      list: '/contacts/folders',
+      create: '/contacts/folders',
+      delete: (id: string) => `/contacts/folders/${id}`,
+    },
   },
   
   // Telephony

@@ -34,7 +34,17 @@ export default function SignUpPage() {
           router.push('/dashboard')
         }
       } catch (error) {
-        console.error('Error creating organization:', error)
+        const rawError = error instanceof Error ? error : new Error(String(error))
+        console.error('[SIGNUP_PAGE] Error creating organization (RAW ERROR)', {
+          userId: user?.id,
+          userEmail: user?.primaryEmailAddress?.emailAddress,
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          errorName: rawError.name,
+          errorCause: (rawError as any).cause,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        })
         // Continue to dashboard anyway - org can be created later
         router.push('/dashboard')
       }

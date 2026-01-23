@@ -44,7 +44,15 @@ export default function PricingPage() {
       if (error) throw error
       setTiers(data || [])
     } catch (error) {
-      console.error('Error loading tiers:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ADMIN] [PRICING] Error loading tiers (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
     } finally {
       setIsLoading(false)
     }
@@ -95,7 +103,17 @@ export default function PricingPage() {
       setEditingTier(null)
       setFormData({})
     } catch (error) {
-      console.error('Error saving tier:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ADMIN] [PRICING] Error saving tier (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        tierId,
+        formData,
+      })
       alert('Failed to save tier. Please try again.')
     } finally {
       setSaving(null)

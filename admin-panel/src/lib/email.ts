@@ -87,7 +87,16 @@ export async function sendOTPEmail(email: string, otpCode: string): Promise<{ su
       data: result
     }
   } catch (error: any) {
-    console.error('[EMAIL] Exception sending email:', error?.message || error)
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[ADMIN] [EMAIL] Exception sending email (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      errorCause: (rawError as any).cause,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      to: email,
+    })
     return { 
       success: false, 
       error: error?.message || 'Network error sending email'

@@ -13,7 +13,6 @@ import { useToast } from '@/hooks/use-toast'
 import { useVoices } from '@/hooks/use-voices'
 import { CreateAgentData } from '@/types'
 import { useQueryClient } from '@tanstack/react-query'
-import { useUser } from '@clerk/nextjs'
 
 interface NewAgentModalProps {
   isOpen: boolean
@@ -36,7 +35,6 @@ export function NewAgentModal({ isOpen, onClose, onSelectType }: NewAgentModalPr
   const { setSelectedAgent } = useAgentStore()
   const createAgentMutation = useCreateAgent()
   const { data: voices = [], isLoading: voicesLoading } = useVoices()
-  const { user, isLoaded: userLoaded } = useUser()
 
   // Sync modal open state with app store
   useEffect(() => {
@@ -94,17 +92,7 @@ export function NewAgentModal({ isOpen, onClose, onSelectType }: NewAgentModalPr
     setIsCreating(true)
     
     try {
-      // Check authentication
-      if (sessionStatus !== 'authenticated' || !session) {
-        toast({
-          title: 'Authentication required',
-          description: 'Please sign in to create an agent.',
-          variant: 'destructive',
-        })
-        isCreatingRef.current = false
-        setIsCreating(false)
-        return
-      }
+      // Auth is handled by useAuthReady in the hook - no manual checks needed
       
       // Wait for voices to load if still loading
       if (voicesLoading) {

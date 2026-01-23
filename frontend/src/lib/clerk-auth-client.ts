@@ -25,12 +25,24 @@ import { debugLogger } from './debug-logger'
 // ============================================================
 let globalClientIdFetchPromise: Promise<string | null> | null = null
 let globalClientIdFetchTime = 0
+let lastOrgId: string | null = null // Track last organization ID to invalidate cache on change
 const CLIENT_ID_CACHE_TTL = 60000 // 60 seconds cache
 
 /**
  * Fetch client_id from API with global locking to prevent duplicate calls
  */
-async function fetchClientIdFromAPI(token: string): Promise<string | null> {
+async function fetchClientIdFromAPI(token: string, currentOrgId?: string | null): Promise<string | null> {
+  // Invalidate cache if organization changed
+  if (currentOrgId && lastOrgId && currentOrgId !== lastOrgId) {
+    debugLogger.logAuth('CLIENT_ID_LOOKUP', 'Organization changed, invalidating cache', {
+      oldOrgId: lastOrgId,
+      newOrgId: currentOrgId,
+    })
+    globalClientIdFetchPromise = null
+    globalClientIdFetchTime = 0
+  }
+  lastOrgId = currentOrgId || null
+
   // Check if we have a cached client_id in authManager
   const cachedClientId = authManager.getClientId()
   if (cachedClientId) {
@@ -75,8 +87,20 @@ async function fetchClientIdFromAPI(token: string): Promise<string | null> {
       }
       return null
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      debugLogger.logError('CLIENT_ID_LOOKUP', error instanceof Error ? error : new Error(errorMessage), {
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      const errorMessage = rawError.message || String(error)
+      
+      console.error('[CLERK_AUTH_CLIENT] Failed to fetch client_id (RAW ERROR)', {
+        endpoint: '/auth/me',
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      
+      debugLogger.logError('CLIENT_ID_LOOKUP', rawError, {
         endpoint: '/auth/me',
       })
       
@@ -90,9 +114,7 @@ async function fetchClientIdFromAPI(token: string): Promise<string | null> {
         debugLogger.logAuth('CLIENT_ID_LOOKUP', 'Network error - continuing without client_id', {
           error: errorMessage,
         })
-        console.warn('[useAuthClient] Network error fetching client_id:', errorMessage)
-      } else {
-        console.error('[useAuthClient] Failed to fetch client_id:', error)
+        console.warn('[CLERK_AUTH_CLIENT] Network error fetching client_id:', errorMessage)
       }
       return null
     } finally {
@@ -121,7 +143,14 @@ export function useAuthClient() {
     try {
       return await getToken()
     } catch (error) {
-      console.error('[useAuthClient] Failed to get Clerk token:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CLERK_AUTH_CLIENT] Failed to get Clerk token (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
       return null
     }
   }, [getToken])
@@ -142,7 +171,14 @@ export function useAuthClient() {
             authManager.setAuth(freshToken, authManager.getClientId())
           }
         } catch (error) {
-          console.error('[useAuthClient] Failed to refresh token on visibility change:', error)
+          const rawError = error instanceof Error ? error : new Error(String(error))
+          console.error('[CLERK_AUTH_CLIENT] Failed to refresh token on visibility change (RAW ERROR)', {
+            error: rawError,
+            errorMessage: rawError.message,
+            errorStack: rawError.stack,
+            errorName: rawError.name,
+            fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+          })
         }
       }
     }
@@ -162,6 +198,77 @@ export function useAuthClient() {
     })
     return unsubscribe
   }, [])
+
+  // Watch for organization changes and refresh client_id
+  useEffect(() => {
+    if (!organization || !isSignedIn || !user) return
+
+    const orgId = organization.id
+    const orgMetadata = organization.publicMetadata as any
+    const orgClientId = orgMetadata?.client_id || null
+
+    debugLogger.logAuth('ORG_CHANGE_CHECK', 'Checking organization for client_id changes', {
+      orgId,
+      orgClientId,
+      currentClientId: clientId,
+    })
+
+    // If organization changed or client_id not in metadata, refresh
+    if (orgClientId && orgClientId !== clientId) {
+      debugLogger.logAuth('ORG_CHANGE', 'Organization client_id changed, refreshing', {
+        orgId,
+        oldClientId: clientId,
+        newClientId: orgClientId,
+      })
+
+      // Clear cache to force fresh fetch
+      globalClientIdFetchPromise = null
+      globalClientIdFetchTime = 0
+      lastOrgId = orgId
+
+      // Refetch client_id from API to ensure consistency
+      getToken().then(token => {
+        if (token) {
+          fetchClientIdFromAPI(token, organization.id).then(newClientId => {
+            if (newClientId) {
+              authManager.setAuth(token, newClientId)
+              apiClient.setClientId(newClientId)
+              setClientId(newClientId)
+              debugLogger.logAuth('ORG_CHANGE', 'Client ID refreshed after org change', {
+                orgId,
+                newClientId,
+              })
+            }
+          }).catch(error => {
+            debugLogger.logError('ORG_CHANGE', error instanceof Error ? error : new Error(String(error)))
+          })
+        }
+      })
+    } else if (orgId && orgId !== lastOrgId) {
+      // Organization ID changed but metadata doesn't have client_id yet
+      // Clear cache and force refresh
+      debugLogger.logAuth('ORG_CHANGE', 'Organization ID changed, clearing cache', {
+        oldOrgId: lastOrgId,
+        newOrgId: orgId,
+      })
+      globalClientIdFetchPromise = null
+      globalClientIdFetchTime = 0
+      lastOrgId = orgId
+      
+      // Refetch to get updated client_id
+      getToken().then(token => {
+        if (token) {
+          fetchClientIdFromAPI(token, orgId).then(newClientId => {
+            if (newClientId) {
+              authManager.setAuth(token, newClientId)
+              apiClient.setClientId(newClientId)
+              setClientId(newClientId)
+            }
+          })
+        }
+      })
+    }
+  }, [organization?.id, organization?.publicMetadata, clientId, isSignedIn, user, getToken])
   
   // Main auth setup effect
   useEffect(() => {
@@ -296,7 +403,8 @@ export function useAuthClient() {
         // If no client_id from org, fetch from API using global fetch lock
         if (!extractedClientId) {
           // Use global fetch lock to prevent duplicate calls
-          extractedClientId = await fetchClientIdFromAPI(token)
+          // Pass organization.id to invalidate cache if org changes
+          extractedClientId = await fetchClientIdFromAPI(token, organization?.id)
         }
         
         // Check if still current after async operations
@@ -331,6 +439,54 @@ export function useAuthClient() {
     setupAuth()
   }, [user, userLoaded, isSignedIn, getToken, organization])
 
+  // Subscribe to organization metadata changes for real-time updates
+  useEffect(() => {
+    if (!organization || !isSignedIn || !user) return
+
+    // Check for metadata changes periodically (Clerk doesn't provide real-time subscription)
+    // The main detection is via the useEffect watching organization.id above
+    // This is a fallback to catch metadata updates
+    const checkOrgMetadata = () => {
+      const orgMetadata = organization.publicMetadata as any
+      const orgClientId = orgMetadata?.client_id || null
+      
+      if (orgClientId && orgClientId !== clientId) {
+        debugLogger.logAuth('ORG_METADATA_CHANGE', 'Organization metadata updated, refreshing client_id', {
+          orgId: organization.id,
+          newClientId: orgClientId,
+          currentClientId: clientId,
+        })
+        
+        // Clear cache and refresh
+        globalClientIdFetchPromise = null
+        globalClientIdFetchTime = 0
+        lastOrgId = organization.id
+        
+        // Trigger refresh
+        getToken().then(token => {
+          if (token) {
+            fetchClientIdFromAPI(token, organization.id).then(newClientId => {
+              if (newClientId) {
+                authManager.setAuth(token, newClientId)
+                apiClient.setClientId(newClientId)
+                setClientId(newClientId)
+              }
+            })
+          }
+        })
+      }
+    }
+
+    // Check immediately
+    checkOrgMetadata()
+    
+    // Set up interval to check for metadata changes (every 5 seconds)
+    // This catches cases where metadata is updated but organization.id doesn't change
+    const intervalId = setInterval(checkOrgMetadata, 5000)
+    
+    return () => clearInterval(intervalId)
+  }, [organization?.id, organization?.publicMetadata, clientId, isSignedIn, user, getToken])
+
   return { 
     user: user ? {
       id: user.id,
@@ -348,7 +504,13 @@ export function useAuthClient() {
     clientId,
     organization,
     // Expose refresh function for manual refresh if needed
-    refreshToken: () => authManager.refreshToken(),
+    refreshToken: () => {
+      // Clear cache and force refresh
+      globalClientIdFetchPromise = null
+      globalClientIdFetchTime = 0
+      lastOrgId = null
+      authManager.refreshToken()
+    },
   }
 }
 

@@ -18,7 +18,14 @@ export async function getClerkUserId(token: string): Promise<string | null> {
       return payload.sub || null
     }
   } catch (error) {
-    console.error('Error extracting Clerk user ID:', error)
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[CLERK] Error extracting Clerk user ID (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+    })
   }
   return null
 }
@@ -35,7 +42,14 @@ export async function getClerkOrganizationId(token: string): Promise<string | nu
       return payload.org_id || payload.org_slug || null
     }
   } catch (error) {
-    console.error('Error extracting Clerk organization ID:', error)
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[CLERK] Error extracting Clerk organization ID (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+    })
   }
   return null
 }

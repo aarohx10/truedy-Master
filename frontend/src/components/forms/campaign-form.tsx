@@ -58,9 +58,18 @@ export function CampaignForm({ onSuccess, onCancel }: CampaignFormProps) {
       })
       onSuccess?.()
     } catch (error) {
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CAMPAIGN_FORM] Error creating campaign (RAW ERROR)', {
+        formData,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
       toast({
         title: 'Error',
-        description: 'Failed to create campaign',
+        description: rawError.message || 'Failed to create campaign',
         variant: 'destructive',
       })
     }

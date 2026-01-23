@@ -48,7 +48,16 @@ export async function POST(request: NextRequest) {
       message: 'OTP code sent to your email' 
     })
   } catch (error: any) {
-    console.error('[OTP] Exception:', error)
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[ADMIN] [REQUEST_OTP] Exception (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      errorCause: (rawError as any).cause,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      email,
+    })
     return NextResponse.json(
       { error: error?.message || 'Internal server error' },
       { status: 500 }

@@ -39,7 +39,16 @@ export function verifyToken(token: string): AdminUser | null {
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as AdminUser
     return decoded
-  } catch (error) {
+  } catch (error: any) {
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[AUTH] Token verification failed (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      errorCode: error.code,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+    })
     return null
   }
 }

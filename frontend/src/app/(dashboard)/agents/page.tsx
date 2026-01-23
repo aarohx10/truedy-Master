@@ -10,7 +10,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { NewAgentModal } from '@/components/forms/new-agent-modal'
 import { AgentIcon } from '@/components/agent-icon'
 import { useAgentStore } from '@/stores/agent-store'
 import { useAgents, useDeleteAgent } from '@/hooks/use-agents'
@@ -35,7 +34,6 @@ export default function AgentsPage() {
   const deleteAgentMutation = useDeleteAgent()
   const createCallMutation = useCreateCall()
   const [searchQuery, setSearchQuery] = useState('')
-  const [showNewAgentModal, setShowNewAgentModal] = useState(false)
   const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null)
   const [callAgentId, setCallAgentId] = useState<string | null>(null)
   
@@ -135,10 +133,22 @@ export default function AgentsPage() {
         description: `"${agentName}" has been deleted successfully.`,
       })
     } catch (error) {
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[AGENTS_PAGE] Error deleting agent (RAW ERROR)', {
+        agentId,
+        agentName,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      
       toast({
         title: 'Error deleting agent',
-        description: error instanceof Error ? error.message : 'Failed to delete agent. Please try again.',
+        description: rawError.message || 'Failed to delete agent. Please try again.',
         variant: 'destructive',
+        duration: 10000,
       })
     } finally {
       setDeletingAgentId(null)
@@ -167,20 +177,26 @@ export default function AgentsPage() {
       setCallAgentId(null)
       router.push('/calls')
     } catch (error) {
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[AGENTS_PAGE] Error creating call (RAW ERROR)', {
+        data,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      
       toast({
         title: 'Error creating call',
-        description: error instanceof Error ? error.message : 'Failed to create call. Please try again.',
+        description: rawError.message || 'Failed to create call. Please try again.',
         variant: 'destructive',
+        duration: 10000,
       })
     }
   }, [createCallMutation, toast, router])
   
 
-  const handleAgentTypeSelect = (type: 'blank' | 'personal' | 'business') => {
-    // Modal will handle navigation after creating agent
-    setShowNewAgentModal(false)
-  }
-  
   // Get status badge color
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -201,12 +217,6 @@ export default function AgentsPage() {
     <AppLayout>
         <div className="bg-white dark:bg-black xl:-mt-[72px] min-h-screen">
           <div className="px-6 py-6">
-            {/* New Agent Modal */}
-            <NewAgentModal 
-              isOpen={showNewAgentModal}
-              onClose={() => setShowNewAgentModal(false)}
-              onSelectType={handleAgentTypeSelect}
-            />
 
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
@@ -227,7 +237,7 @@ export default function AgentsPage() {
               <div className="flex gap-2 w-full sm:w-auto">
                 <Button
                   className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30 gap-2 flex-1 sm:flex-initial"
-                  onClick={() => setShowNewAgentModal(true)}
+                  onClick={() => router.push('/agents/new')}
                   disabled={isInitialLoading}
                 >
                   <Plus className="h-4 w-4" />
@@ -313,7 +323,7 @@ export default function AgentsPage() {
                       </p>
                       {!searchQuery && (
                         <Button
-                          onClick={() => setShowNewAgentModal(true)}
+                          onClick={() => router.push('/agents/new')}
                           className="bg-primary hover:bg-primary/90 text-white"
                         >
                           <Plus className="h-4 w-4 mr-2" />
@@ -462,7 +472,7 @@ export default function AgentsPage() {
                   </p>
                   {!searchQuery && (
                     <Button
-                      onClick={() => setShowNewAgentModal(true)}
+                      onClick={() => router.push('/agents/new')}
                       className="bg-primary hover:bg-primary/90 text-white w-full"
                     >
                       <Plus className="h-4 w-4 mr-2" />

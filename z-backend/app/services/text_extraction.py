@@ -5,8 +5,111 @@ import logging
 from typing import List
 from pathlib import Path
 import io
+import httpx
+import re
+from html.parser import HTMLParser
 
 logger = logging.getLogger(__name__)
+
+
+class HTMLTextExtractor(HTMLParser):
+    """Extract text from HTML, removing script, style, and navigation elements"""
+    def __init__(self):
+        super().__init__()
+        self.text_parts = []
+        self.skip_tags = {'script', 'style', 'noscript', 'nav', 'header', 'footer'}
+        self.in_skip_tag = False
+    
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() in self.skip_tags:
+            self.in_skip_tag = True
+    
+    def handle_endtag(self, tag):
+        if tag.lower() in self.skip_tags:
+            self.in_skip_tag = False
+    
+    def handle_data(self, data):
+        if not self.in_skip_tag:
+            text = data.strip()
+            if text:
+                self.text_parts.append(text)
+    
+    def get_text(self) -> str:
+        """Get extracted text, cleaned and normalized"""
+        text = ' '.join(self.text_parts)
+        # Remove excessive whitespace
+        text = re.sub(r'\s+', ' ', text)
+        # Remove common UI patterns
+        ui_patterns = [
+            r'\b(File|Edit|View|Insert|Format|Tools|Extensions|Help|Sign in|Share|Tab|External|Menu|Undo|Redo|Print)\b',
+            r'\b(Copy format|Normal text|Arial|Bold|Italic|Underline|Align|Line spacing)\b',
+            r'\b(Checklist|Bullet points|Numbered list|Indent|Outdent|Clear formatting)\b',
+            r'\b(Version history|Comment|Video call|Editing|Document tabs)\b',
+        ]
+        for pattern in ui_patterns:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        return text.strip()
+
+
+async def extract_text_from_url(url: str) -> str:
+    """
+    Extract text from a web URL by fetching HTML and stripping tags.
+    
+    Args:
+        url: The URL to fetch and extract text from
+    
+    Returns:
+        Extracted text content
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(
+                url,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                }
+            )
+            response.raise_for_status()
+            html_content = response.text
+            
+            # Extract text from HTML
+            extractor = HTMLTextExtractor()
+            extractor.feed(html_content)
+            text = extractor.get_text()
+            
+            if not text or len(text.strip()) < 10:
+                raise ValueError(f"Could not extract meaningful text from URL: {url}")
+            
+            return text
+    except httpx.HTTPStatusError as e:
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_traceback": traceback.format_exc(),
+            "url": url,
+            "status_code": e.response.status_code if e.response else None,
+            "response_text": e.response.text[:500] if e.response and e.response.text else None,
+        }
+        logger.error(f"[TEXT_EXTRACTION] HTTP error fetching URL (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
+        raise ValueError(f"Failed to fetch URL: HTTP {e.response.status_code}")
+    except Exception as e:
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_traceback": traceback.format_exc(),
+            "url": url,
+        }
+        logger.error(f"[TEXT_EXTRACTION] Failed to extract text from URL (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
+        raise
 
 
 def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
@@ -107,7 +210,17 @@ async def _extract_docx(file_path: str) -> str:
         logger.error("python-docx is not installed. Install with: pip install python-docx")
         raise
     except Exception as e:
-        logger.error(f"DOCX extraction failed: {e}", exc_info=True)
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_traceback": traceback.format_exc(),
+            "file_path": file_path,
+        }
+        logger.error(f"[TEXT_EXTRACTION] DOCX extraction failed (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         raise
 
 
@@ -122,8 +235,30 @@ async def _extract_text(file_path: str) -> str:
             with open(file_path, 'r', encoding='latin-1') as f:
                 return f.read()
         except Exception as e:
-            logger.error(f"Text extraction failed: {e}", exc_info=True)
+            import traceback
+            import json
+            error_details_raw = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "error_args": e.args if hasattr(e, 'args') else None,
+                "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+                "full_traceback": traceback.format_exc(),
+                "file_path": file_path,
+                "encoding": "latin-1",
+            }
+            logger.error(f"[TEXT_EXTRACTION] Text extraction failed (latin-1 encoding) (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
             raise
     except Exception as e:
-        logger.error(f"Text extraction failed: {e}", exc_info=True)
+        import traceback
+        import json
+        error_details_raw = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "error_args": e.args if hasattr(e, 'args') else None,
+            "error_dict": e.__dict__ if hasattr(e, '__dict__') else None,
+            "full_traceback": traceback.format_exc(),
+            "file_path": file_path,
+            "encoding": "utf-8",
+        }
+        logger.error(f"[TEXT_EXTRACTION] Text extraction failed (utf-8 encoding) (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
         raise

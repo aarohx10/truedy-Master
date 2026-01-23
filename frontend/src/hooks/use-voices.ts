@@ -5,19 +5,54 @@ import { Voice } from '@/types'
 import { useAuthClient, useClientId, useAuthReady } from '@/lib/clerk-auth-client'
 
 /**
- * Hook for fetching voices from the API
- * Uses authManager.isReady to wait for auth before making requests
+ * Simplified hook for fetching voices from the API
+ * Direct data fetching from Supabase backend only
  */
 export function useVoices(source?: 'ultravox' | 'custom') {
   const { clientId, isLoading: authLoading } = useAuthClient()
   const isAuthReady = useAuthReady()
   
-  const query = useQuery({
+  return useQuery({
     queryKey: ['voices', clientId, source],
     queryFn: async () => {
       const url = source ? `${endpoints.voices.list}?source=${source}` : endpoints.voices.list
-      const response = await apiClient.get<Voice[]>(url)
-      return response.data
+      
+      console.log('[USE_VOICES] Fetching voices', {
+        clientId,
+        source,
+        url,
+        isAuthReady,
+        authLoading,
+      })
+      
+      try {
+        const response = await apiClient.get<Voice[]>(url)
+        
+        console.log('[USE_VOICES] Voices fetched successfully (RAW RESPONSE)', {
+          clientId,
+          source,
+          url,
+          response,
+          responseData: response.data,
+          voiceCount: response.data?.length || 0,
+          fullResponse: JSON.stringify(response, null, 2),
+        })
+        
+        return response.data
+      } catch (error) {
+        const rawError = error instanceof Error ? error : new Error(String(error))
+        console.error('[USE_VOICES] Failed to fetch voices (RAW ERROR)', {
+          clientId,
+          source,
+          url,
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          errorName: rawError.name,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        })
+        throw rawError
+      }
     },
     enabled: !authLoading && isAuthReady && authManager.hasToken(),
     staleTime: 1000 * 60,
@@ -27,8 +62,6 @@ export function useVoices(source?: 'ultravox' | 'custom') {
       return query.data?.some(v => v.status === 'training') ? 3000 : false
     },
   })
-  
-  return query
 }
 
 export function useExploreVoices() {
@@ -75,8 +108,37 @@ export function useCreateVoice() {
         provider?: string
       }
     }) => {
-      const response = await apiClient.post<Voice>(endpoints.voices.create, data)
-      return response.data
+      console.log('[USE_CREATE_VOICE] Starting voice creation', {
+        clientId,
+        data,
+        fullData: JSON.stringify(data, null, 2),
+        endpoint: endpoints.voices.create,
+      })
+      
+      try {
+        const response = await apiClient.post<Voice>(endpoints.voices.create, data)
+        
+        console.log('[USE_CREATE_VOICE] Voice creation successful (RAW RESPONSE)', {
+          clientId,
+          response,
+          responseData: response.data,
+          fullResponse: JSON.stringify(response, null, 2),
+        })
+        
+        return response.data
+      } catch (error) {
+        const rawError = error instanceof Error ? error : new Error(String(error))
+        console.error('[USE_CREATE_VOICE] Voice creation failed (RAW ERROR)', {
+          clientId,
+          data,
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          errorName: rawError.name,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        })
+        throw rawError
+      }
     },
     onSuccess: (newVoice) => {
       queryClient.setQueryData<Voice[]>(['voices', clientId, 'custom'], (oldVoices = []) => {

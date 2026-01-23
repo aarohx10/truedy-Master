@@ -139,8 +139,18 @@ export default function CallsPage() {
       })
       setIsCreateModalOpen(false)
     } catch (error) {
-      console.error('Error creating call:', error)
-      let errorMessage = error instanceof Error ? error.message : 'Failed to create call. Please try again.'
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CALLS_PAGE] Error creating call (RAW ERROR)', {
+        data,
+        selectedAgent,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      
+      let errorMessage = rawError.message || 'Failed to create call. Please try again.'
       
       // Provide helpful error messages
       if (errorMessage.includes('Invalid or expired token')) {

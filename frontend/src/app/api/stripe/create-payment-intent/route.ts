@@ -68,9 +68,20 @@ export async function POST(request: NextRequest) {
       clientSecret: paymentIntent.client_secret,
     })
   } catch (error: any) {
-    console.error('Error creating payment intent:', error)
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[STRIPE_PAYMENT_INTENT] Error creating payment intent (RAW ERROR)', {
+      userId,
+      orgId,
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      errorCode: (error as any).code,
+      errorType: (error as any).type,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+    })
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: rawError.message || 'Internal server error' },
       { status: 500 }
     )
   }

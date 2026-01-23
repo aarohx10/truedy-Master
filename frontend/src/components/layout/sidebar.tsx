@@ -2,190 +2,83 @@
 
 import Link from 'next/link'
 import Image from 'next/image'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/stores/app-store'
-import { NAV_ITEMS } from '@/constants'
-import { useState, useTransition, useRef, useEffect } from 'react'
+import { useState, useTransition } from 'react'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
+import { useUser } from '@clerk/nextjs'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   Home,
-  Bot,
-  FolderOpen,
-  Wrench,
-  Mic,
-  MessageSquare,
-  Phone,
   BarChart3,
-  Smartphone,
-  PhoneOutgoing,
+  Wand2,
   Users,
+  PhoneOutgoing,
+  Smartphone,
   Settings,
   ChevronLeft,
   ChevronRight,
   X,
   Menu,
-  ChevronDown,
-  ChevronUp,
-  Bell,
-  Infinity,
-  Wand2,
-  Search,
-  Check,
-  Plus,
-  LogOut,
-  BookOpen,
-  FileText,
+  Key,
   CreditCard,
+  Building2,
+  ArrowLeft,
+  Mic2,
+  Wrench,
+  BookOpen,
+  Phone,
 } from 'lucide-react'
-import { Input } from '@/components/ui/input'
-import { useQuery } from '@tanstack/react-query'
-import { apiClient, endpoints } from '@/lib/api'
-import { useClientId } from '@/lib/clerk-auth-client'
 
 const iconMap: Record<string, any> = {
   Home,
-  Bot,
-  Wand2,
-  FolderOpen,
-  Wrench,
-  Mic,
-  MessageSquare,
-  Phone,
   BarChart3,
-  Smartphone,
-  PhoneOutgoing,
+  Wand2,
   Users,
+  PhoneOutgoing,
+  Smartphone,
   Settings,
+  Key,
   CreditCard,
-}
-
-interface Client {
-  id: string
-  name: string
-  email: string
-  subscription_status: string
-  credits_balance: number
-  credits_ceiling: number
-  member_count?: number
+  Building2,
+  Mic2,
+  Wrench,
+  BookOpen,
+  Phone,
 }
 
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const currentClientId = useClientId()
+  const searchParams = useSearchParams()
+  const { user } = useUser()
   const { sidebarCollapsed, toggleSidebar, mobileMenuOpen, setMobileMenuOpen, modalOpen } = useAppStore()
   const [, startTransition] = useTransition()
   const [clickedPath, setClickedPath] = useState<string | null>(null)
-  const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [activeTab, setActiveTab] = useState<'workspaces' | 'settings'>('workspaces')
-  const workspaceButtonRef = useRef<HTMLDivElement>(null)
-  const collapsedWorkspaceButtonRef = useRef<HTMLButtonElement>(null)
-  const [modalPosition, setModalPosition] = useState({ top: 0, left: 0 })
-  
-  // Fetch workspaces (clients) from database
-  const { data: clientsData, isLoading: clientsLoading } = useQuery({
-    queryKey: ['clients', currentClientId],
-    queryFn: async () => {
-      const response = await apiClient.get<{ data: Client[] }>(endpoints.auth.clients)
-      const clients = Array.isArray(response.data) ? response.data : []
-      
-      // Fetch member count for each client from database
-      const clientsWithMembers = await Promise.all(
-        clients.map(async (client) => {
-          try {
-            // Query users for this client to get member count
-            // Using database select pattern - adjust if endpoint structure differs
-            const originalClientId = apiClient.getClientId()
-            
-            // Temporarily set client_id to query users for this workspace
-            apiClient.setClientId(client.id)
-            
-            // Try to query users table - this uses RLS to filter by client_id
-            let memberCount = 1
-            try {
-              // Query users for current client (RLS will filter automatically)
-              const usersResponse = await apiClient.get<{ data: any[] }>(endpoints.auth.users)
-              if (Array.isArray(usersResponse.data)) {
-                memberCount = usersResponse.data.length || 1
-              }
-            } catch (err) {
-              // If /users endpoint doesn't exist, try alternative approach
-              // For now default to 1 - backend should add member_count to client response
-              memberCount = 1
-            }
-            
-            // Restore original clientId
-            if (originalClientId) {
-              apiClient.setClientId(originalClientId)
-            } else if (currentClientId) {
-              apiClient.setClientId(currentClientId)
-            }
-            
-            return {
-              ...client,
-              member_count: memberCount,
-            }
-          } catch (error) {
-            // If query fails, default to 1 (at least the admin exists)
-            return {
-              ...client,
-              member_count: 1,
-            }
-          }
-        })
-      )
-      return clientsWithMembers
-    },
-    enabled: !!currentClientId,
-  })
-  
-  const clients = clientsData || []
-  const filteredClients = searchQuery
-    ? clients.filter((client) =>
-        client.name.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : clients
-
-  // Calculate modal position when it opens - position to the right of the clicked button
-  useEffect(() => {
-    if (workspaceModalOpen) {
-      setTimeout(() => {
-        const anchor = workspaceButtonRef.current || collapsedWorkspaceButtonRef.current
-        if (anchor) {
-          const rect = anchor.getBoundingClientRect()
-          // Add more top/left margins for visual spacing
-          setModalPosition({
-            top: Math.max(16, Math.min(rect.top + 20, window.innerHeight - 600 - 16)),
-            left: Math.min(rect.right + 8 + 20, window.innerWidth - 320 - 16),
-          })
-        }
-      }, 0)
-    }
-  }, [workspaceModalOpen])
+  const isSettingsView = pathname === '/settings' || pathname.startsWith('/settings/') || pathname === '/billing'
 
   const handleNavigation = (href: string) => {
-    // Optimistic UI - immediately show as active
     setClickedPath(href)
     
-    // Close mobile menu when a link is clicked
     if (mobileMenuOpen) {
       setMobileMenuOpen(false)
     }
 
-    // Use transition for smooth navigation
     startTransition(() => {
       router.push(href)
-      // Clear clicked path after navigation
       setTimeout(() => setClickedPath(null), 300)
     })
   }
 
+  const handleBackToDashboard = () => {
+    handleNavigation('/dashboard')
+  }
+
   return (
     <>
-      {/* Mobile Menu Button - Right side for mobile */}
+      {/* Mobile Menu Button */}
       {!mobileMenuOpen && !modalOpen && (
         <Button
           variant="default"
@@ -200,17 +93,14 @@ export function Sidebar() {
       <aside
         className={cn(
           'fixed top-0 z-[60] h-screen sidebar-modern transition-all duration-300',
-          // Mobile/Tablet (< 1280px): slide in from right
           'w-72 right-0',
           mobileMenuOpen ? 'translate-x-0' : 'translate-x-full',
-          // Desktop (xl: 1280px+): fixed on left, always visible unless modal is open
           'xl:left-0 xl:right-auto xl:translate-x-0',
           sidebarCollapsed ? 'xl:w-20' : 'xl:w-72',
-          // Hide sidebar when modal is open
           modalOpen && 'hidden'
         )}
       >
-      <div className="flex h-full flex-col">
+        <div className="flex h-full flex-col">
           {/* Header */}
           <div className={cn(
             "flex h-16 shrink-0 items-center bg-white dark:bg-black",
@@ -222,7 +112,6 @@ export function Sidebar() {
                   onClick={() => handleNavigation('/dashboard')} 
                   className="flex items-center space-x-3 group cursor-pointer relative"
                 >
-                  {/* Logo for both light and dark mode - using CSS to prevent flash */}
                   <Image
                     src="/icons/Frame 1000004887.png"
                     alt="Truedy AI Logo"
@@ -241,7 +130,6 @@ export function Sidebar() {
                   />
                 </button>
                 
-                {/* Close button for mobile */}
                 <Button
                   variant="ghost"
                   size="icon"
@@ -251,7 +139,6 @@ export function Sidebar() {
                   <X className="h-5 w-5" />
                 </Button>
 
-                {/* Collapse button for desktop */}
                 <Button
                   variant="ghost"
                   size="icon"
@@ -278,189 +165,132 @@ export function Sidebar() {
                 />
               </button>
             )}
-        </div>
+          </div>
 
-
-        {/* Navigation */}
+          {/* Navigation */}
           <nav className={cn(
             "flex-1 overflow-y-auto scrollbar-hide",
             sidebarCollapsed && !mobileMenuOpen ? "px-2" : "px-6"
           )}>
-            {/* Home - Always first */}
-            <div className="mb-6">
-              <button
-                onClick={() => handleNavigation('/dashboard')}
-                className={cn(
-                  'sidebar-nav-item w-full',
-                  (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) && 'active',
-                  sidebarCollapsed && !mobileMenuOpen && 'justify-center px-2'
-                )}
-              >
-                <Home className={cn('sidebar-icon', sidebarCollapsed && !mobileMenuOpen ? '' : 'mr-3')} />
-                {(!sidebarCollapsed || mobileMenuOpen) && <span className="transition-all">Home</span>}
-              </button>
-            </div>
-
-            {/* Build Section */}
-            <div className="mb-6">
-              {(!sidebarCollapsed || mobileMenuOpen) && (
-                <div className="sidebar-section-title mb-3">Build</div>
-              )}
-              <div className="space-y-1">
-                {[
-                  { title: 'Agents', href: '/agents', icon: 'Wand2' },
-                  { title: 'Knowledge Base', href: '/rag', icon: 'FolderOpen' },
-                  { title: 'Integrations', href: '/tools', icon: 'Wrench' },
-                  { title: 'Voices', href: '/voice-cloning', icon: 'Mic' },
-                ].map((item) => {
-                  const Icon = iconMap[item.icon]
-                  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
-                  const isClickedActive = clickedPath === item.href
-
-              return (
-                    <button
-                      key={item.href}
-                      onClick={() => handleNavigation(item.href)}
-                  className={cn(
-                        'sidebar-nav-item w-full',
-                        (isActive || isClickedActive) && 'active',
-                        sidebarCollapsed && !mobileMenuOpen && 'justify-center px-2'
-                      )}
-                    >
-                      <Icon className={cn('sidebar-icon', sidebarCollapsed && !mobileMenuOpen ? '' : 'mr-3')} />
-                      {(!sidebarCollapsed || mobileMenuOpen) && <span className="transition-all">{item.title}</span>}
-                    </button>
-                  )
-                })}
-              </div>
+            {isSettingsView ? (
+              /* Settings View (Tier 2) */
+              <>
+                {/* Back to Dashboard */}
+                <div className="mb-6">
+                  <button
+                    onClick={handleBackToDashboard}
+                    className={cn(
+                      'sidebar-nav-item w-full',
+                      sidebarCollapsed && !mobileMenuOpen && 'justify-center px-2'
+                    )}
+                  >
+                    <ArrowLeft className={cn('sidebar-icon', sidebarCollapsed && !mobileMenuOpen ? '' : 'mr-3')} />
+                    {(!sidebarCollapsed || mobileMenuOpen) && <span className="transition-all">Back to Dashboard</span>}
+                  </button>
                 </div>
 
-            {/* Evaluate Section */}
-            <div className="mb-6">
-              {(!sidebarCollapsed || mobileMenuOpen) && (
-                <div className="sidebar-section-title mb-3">Evaluate</div>
-              )}
-              <div className="space-y-1">
+                {/* Settings Items */}
+                <div className="space-y-1">
                 {[
-                  { title: 'Calls', href: '/calls', icon: 'Phone' },
-                  { title: 'Analytics', href: '/analytics', icon: 'BarChart3' },
+                  { title: 'API Keys', href: '/settings?tab=api-keys', icon: 'Key', tab: 'api-keys' },
+                  { title: 'Billing', href: '/billing', icon: 'CreditCard', tab: 'billing' },
+                  { title: 'Team', href: '/settings?tab=team', icon: 'Users', tab: 'team' },
+                  { title: 'Workspace', href: '/settings?tab=workspace', icon: 'Building2', tab: 'workspace' },
                 ].map((item) => {
                   const Icon = iconMap[item.icon]
-                  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
+                  const currentTab = searchParams?.get('tab') || 'api-keys'
+                  const isActive = (item.tab === 'billing' && pathname === '/billing') || 
+                                   (item.tab !== 'billing' && pathname === '/settings' && currentTab === item.tab)
                   const isClickedActive = clickedPath === item.href
 
-                  return (
-                    <button
-                      key={item.href}
-                      onClick={() => handleNavigation(item.href)}
-                      className={cn(
-                        'sidebar-nav-item w-full',
-                        (isActive || isClickedActive) && 'active',
-                        sidebarCollapsed && !mobileMenuOpen && 'justify-center px-2'
-                      )}
-                    >
-                      <Icon className={cn('sidebar-icon', sidebarCollapsed && !mobileMenuOpen ? '' : 'mr-3')} />
-                      {(!sidebarCollapsed || mobileMenuOpen) && <span className="transition-all">{item.title}</span>}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* Telephony Section */}
-            <div className="mb-6">
-              {(!sidebarCollapsed || mobileMenuOpen) && (
-                <div className="sidebar-section-title mb-3">Telephony</div>
-              )}
-              <div className="space-y-1">
-                {[
-                  { title: 'Phone Numbers', href: '/phone-numbers', icon: 'Smartphone' },
-                  { title: 'Outbound', href: '/campaigns', icon: 'PhoneOutgoing' },
-                ].map((item) => {
-            const Icon = iconMap[item.icon]
-            const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
-            const isClickedActive = clickedPath === item.href
-            
-                  return (
-                    <button
-                      key={item.href}
-                      onClick={() => handleNavigation(item.href)}
-                      className={cn(
-                        'sidebar-nav-item w-full',
-                        (isActive || isClickedActive) && 'active',
-                        sidebarCollapsed && !mobileMenuOpen && 'justify-center px-2'
-                      )}
-                    >
-                      <Icon className={cn('sidebar-icon', sidebarCollapsed && !mobileMenuOpen ? '' : 'mr-3')} />
-                      {(!sidebarCollapsed || mobileMenuOpen) && <span className="transition-all">{item.title}</span>}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* Integrations Section */}
-            <div className="mb-6">
-              {(!sidebarCollapsed || mobileMenuOpen) && (
-                <div className="sidebar-section-title mb-3">Integrations</div>
-              )}
-              <div className="space-y-1">
-                {[
-                  { title: 'Contacts', href: '/contacts', icon: 'Users' },
-                ].map((item) => {
-                  const Icon = iconMap[item.icon]
-                  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
-                  const isClickedActive = clickedPath === item.href
-
-                  return (
-                    <button
-                      key={item.href}
-                      onClick={() => handleNavigation(item.href)}
-                      className={cn(
-                        'sidebar-nav-item w-full',
-                        (isActive || isClickedActive) && 'active',
-                        sidebarCollapsed && !mobileMenuOpen && 'justify-center px-2'
-                      )}
-                    >
-                      <Icon className={cn('sidebar-icon', sidebarCollapsed && !mobileMenuOpen ? '' : 'mr-3')} />
-                      {(!sidebarCollapsed || mobileMenuOpen) && <span className="transition-all">{item.title}</span>}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* Settings & Billing */}
-            <div className="space-y-1">
-              {[
-                { title: 'Billing', href: '/billing', icon: 'CreditCard' },
-                { title: 'Settings', href: '/settings', icon: 'Settings' },
-              ].map((item) => {
-                const Icon = iconMap[item.icon] || Settings
-                const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
-                const isClickedActive = clickedPath === item.href
-                const isCollapsed = sidebarCollapsed && !mobileMenuOpen
-
-             return (
+                    return (
+                      <button
+                        key={item.href}
+                        onClick={() => handleNavigation(item.href)}
+                        className={cn(
+                          'sidebar-nav-item w-full',
+                          (isActive || isClickedActive) && 'active',
+                          sidebarCollapsed && !mobileMenuOpen && 'justify-center px-2'
+                        )}
+                      >
+                        <Icon className={cn('sidebar-icon', sidebarCollapsed && !mobileMenuOpen ? '' : 'mr-3')} />
+                        {(!sidebarCollapsed || mobileMenuOpen) && <span className="transition-all">{item.title}</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            ) : (
+              /* Dashboard View (Tier 1) */
+              <>
+                {/* Home */}
+                <div className="mb-6">
                   <button
-                key={item.href}
-                onClick={() => handleNavigation(item.href)}
-                className={cn(
+                    onClick={() => handleNavigation('/dashboard')}
+                    className={cn(
                       'sidebar-nav-item w-full',
-                      (isActive || isClickedActive) && 'active',
-                  isCollapsed && 'justify-center px-2'
-                )}
-              >
-                      <Icon className={cn('sidebar-icon', isCollapsed ? '' : 'mr-3')} />
-                {!isCollapsed && <span className="transition-all">{item.title}</span>}
+                      (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) && 'active',
+                      sidebarCollapsed && !mobileMenuOpen && 'justify-center px-2'
+                    )}
+                  >
+                    <Home className={cn('sidebar-icon', sidebarCollapsed && !mobileMenuOpen ? '' : 'mr-3')} />
+                    {(!sidebarCollapsed || mobileMenuOpen) && <span className="transition-all">Home</span>}
                   </button>
-            )
-          })}
-            </div>
-        </nav>
+                </div>
 
+                {/* Main Navigation Items */}
+                <div className="space-y-1 mb-6">
+                  {[
+                    { title: 'Analytics', href: '/analytics', icon: 'BarChart3' },
+                    { title: 'Agents', href: '/agents', icon: 'Wand2' },
+                    { title: 'Voice Cloning', href: '/voice-cloning', icon: 'Mic2' },
+                    { title: 'Knowledge Base', href: '/rag', icon: 'BookOpen' },
+                    { title: 'Tools', href: '/tools', icon: 'Wrench' },
+                    { title: 'Contacts', href: '/contacts', icon: 'Users' },
+                    { title: 'Calls', href: '/calls', icon: 'Phone' },
+                    { title: 'Outbound', href: '/campaigns', icon: 'PhoneOutgoing' },
+                    { title: 'Phone Numbers', href: '/phone-numbers', icon: 'Smartphone' },
+                  ].map((item) => {
+                    const Icon = iconMap[item.icon]
+                    const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
+                    const isClickedActive = clickedPath === item.href
 
-          {/* Theme Toggle & Workspace Selector */}
+                    return (
+                      <button
+                        key={item.href}
+                        onClick={() => handleNavigation(item.href)}
+                        className={cn(
+                          'sidebar-nav-item w-full',
+                          (isActive || isClickedActive) && 'active',
+                          sidebarCollapsed && !mobileMenuOpen && 'justify-center px-2'
+                        )}
+                      >
+                        <Icon className={cn('sidebar-icon', sidebarCollapsed && !mobileMenuOpen ? '' : 'mr-3')} />
+                        {(!sidebarCollapsed || mobileMenuOpen) && <span className="transition-all">{item.title}</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Settings Button */}
+                <div className="mb-6">
+                  <button
+                    onClick={() => handleNavigation('/settings')}
+                    className={cn(
+                      'sidebar-nav-item w-full',
+                      (pathname === '/settings' || pathname.startsWith('/settings/') || pathname === '/billing') && 'active',
+                      sidebarCollapsed && !mobileMenuOpen && 'justify-center px-2'
+                    )}
+                  >
+                    <Settings className={cn('sidebar-icon', sidebarCollapsed && !mobileMenuOpen ? '' : 'mr-3')} />
+                    {(!sidebarCollapsed || mobileMenuOpen) && <span className="transition-all">Settings</span>}
+                  </button>
+                </div>
+              </>
+            )}
+          </nav>
+
+          {/* Footer - Theme Toggle & User Profile */}
           {(!sidebarCollapsed || mobileMenuOpen) && (
             <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-900 space-y-4">
               {/* Theme Toggle */}
@@ -469,35 +299,31 @@ export function Sidebar() {
                 <ThemeToggle />
               </div>
 
-              {/* Workspace Selector */}
-              <div className="relative">
-                <div 
-                  ref={workspaceButtonRef}
-                  className="sidebar-workspace-selector cursor-pointer"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setWorkspaceModalOpen(!workspaceModalOpen)
-                  }}
-                >
-                  <div className="w-8 h-8 bg-gray-200 dark:bg-gray-900 rounded-full flex items-center justify-center">
-                    <Infinity className="sidebar-icon-small text-gray-600 dark:text-gray-400" />
+              {/* User Profile Card */}
+              {user && (
+                <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={user.imageUrl} alt={user.fullName || user.emailAddresses[0]?.emailAddress || 'User'} />
+                    <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                      {user.fullName?.charAt(0) || user.emailAddresses[0]?.emailAddress?.charAt(0) || 'U'}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                      {user.fullName || user.emailAddresses[0]?.emailAddress || 'User'}
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-gray-500 truncate">
+                      {user.emailAddresses[0]?.emailAddress}
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">Truedy AI</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-500">My Workspace</div>
-                  </div>
-                  <ChevronDown className="sidebar-icon-small text-gray-500 dark:text-gray-500" />
                 </div>
-
-                {/* Workspace Modal (moved to root to support collapsed mode as well) */}
-              </div>
+              )}
             </div>
           )}
 
-          {/* Theme Toggle & Expand Button for Collapsed Sidebar */}
+          {/* Collapsed Footer */}
           {(sidebarCollapsed && !mobileMenuOpen) && (
             <div className="px-3 py-4 border-t border-gray-100 dark:border-gray-900 flex flex-col items-center gap-4">
-              {/* Expand Button */}
               <Button
                 variant="ghost"
                 size="icon"
@@ -507,246 +333,20 @@ export function Sidebar() {
                 <ChevronRight className="h-5 w-5" />
               </Button>
               
-              {/* Theme Toggle - should appear above workspace icon in collapsed mode */}
               <ThemeToggle />
 
-              {/* Workspace Button (collapsed) */}
-              <button
-                ref={collapsedWorkspaceButtonRef}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  const anchor = collapsedWorkspaceButtonRef.current
-                  if (anchor) {
-                    const rect = anchor.getBoundingClientRect()
-                    const computedTop = Math.max(16, Math.min(rect.top + 20, window.innerHeight - 600 - 16))
-                    const computedLeft = Math.min(rect.right + 28, window.innerWidth - 320 - 16)
-                    setModalPosition({ top: computedTop, left: computedLeft })
-                  }
-                  setWorkspaceModalOpen(true)
-                }}
-                className="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-900 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800"
-                aria-label="Open workspace"
-                title="My Workspace"
-              >
-                <Infinity className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-              </button>
+              {user && (
+                <Avatar className="h-10 w-10">
+                  <AvatarImage src={user.imageUrl} alt={user.fullName || 'User'} />
+                  <AvatarFallback className="bg-primary/10 text-primary">
+                    {user.fullName?.charAt(0) || user.emailAddresses[0]?.emailAddress?.charAt(0) || 'U'}
+                  </AvatarFallback>
+                </Avatar>
+              )}
             </div>
           )}
-
-      </div>
-      {/* Global Workspace Modal (always rendered for both expanded and collapsed modes) */}
-      {workspaceModalOpen && (
-        <>
-          <div 
-            className="fixed inset-0 z-[100] bg-transparent" 
-            onClick={() => setWorkspaceModalOpen(false)}
-          />
-          <div 
-            className="fixed z-[101] w-[320px] h-[600px] bg-white dark:bg-black border-2 border-gray-300 dark:border-gray-700 rounded-lg shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-            style={{ 
-              top: `${modalPosition.top}px`,
-              left: `${modalPosition.left}px`,
-              maxHeight: '600px'
-            }}
-          >
-            <div className="flex flex-col h-full">
-              {/* Tabs */}
-              <div className="flex border-b border-gray-200 dark:border-gray-800">
-                <button
-                  onClick={() => setActiveTab('workspaces')}
-                  className={cn(
-                    "flex-1 px-4 py-3 text-sm font-medium transition-colors",
-                    activeTab === 'workspaces'
-                      ? "text-primary border-b-2 border-primary bg-gray-50 dark:bg-gray-900"
-                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
-                  )}
-                >
-                  Workspaces
-                </button>
-                <button
-                  onClick={() => setActiveTab('settings')}
-                  className={cn(
-                    "flex-1 px-4 py-3 text-sm font-medium transition-colors",
-                    activeTab === 'settings'
-                      ? "text-primary border-b-2 border-primary bg-gray-50 dark:bg-gray-900"
-                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
-                  )}
-                >
-                  Settings
-                </button>
-              </div>
-
-              {/* Tab Content */}
-              <div className="flex-1 overflow-y-auto">
-                {activeTab === 'workspaces' ? (
-                  <>
-                    {/* Search */}
-                    <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
-                        <Input
-                          type="text"
-                          placeholder="Search workspaces..."
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          className="pl-10 w-full"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Workspace List */}
-                    <div className="px-4 py-3">
-                      {clientsLoading ? (
-                        <div className="text-center py-8">
-                          <p className="text-sm text-gray-500 dark:text-gray-400">Loading workspaces...</p>
-                        </div>
-                      ) : filteredClients.length === 0 ? (
-                        <div className="text-center py-8">
-                          <p className="text-sm text-gray-500 dark:text-gray-400">
-                            {searchQuery ? 'No workspaces found' : 'No workspaces'}
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {filteredClients.map((client) => (
-                            <div
-                              key={client.id}
-                              className={cn(
-                                "flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer transition-colors",
-                                currentClientId === client.id && "bg-gray-50 dark:bg-gray-900"
-                              )}
-                              onClick={() => {
-                                // Switch workspace logic here if needed
-                                setWorkspaceModalOpen(false)
-                              }}
-                            >
-                              <div className="flex items-center gap-3 flex-1">
-                                <div className="w-10 h-10 bg-gray-200 dark:bg-gray-900 rounded-lg flex items-center justify-center">
-                                  <Infinity className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-                                </div>
-                                <div className="flex-1">
-                                  <div className="text-sm font-medium text-gray-900 dark:text-white">{client.name}</div>
-                                  <div className="text-xs text-gray-500 dark:text-gray-500 flex items-center gap-2">
-                                    <Users className="h-3 w-3" />
-                                    {client.member_count || 1} {client.member_count === 1 ? 'person' : 'people'}
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <span className="text-xs text-gray-500 dark:text-gray-500 capitalize">
-                                  {client.subscription_status || 'Free'}
-                                </span>
-                                {currentClientId === client.id && (
-                                  <Check className="h-5 w-5 text-primary" />
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Footer Button - Single Create New Workspace Button */}
-                    <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-800">
-                      <Button 
-                        className="w-full gap-2"
-                        onClick={() => {
-                          // TODO: Implement create workspace functionality
-                          console.log('Create new workspace')
-                          setWorkspaceModalOpen(false)
-                        }}
-                      >
-                        <Plus className="h-4 w-4" />
-                        Create New Workspace
-                      </Button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="px-4 py-3 space-y-6">
-                    {/* Credits Section */}
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 rounded-full border-2 border-gray-400 dark:border-gray-600"></div>
-                          <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Credits</h4>
-                        </div>
-                        <Button size="sm" className="bg-black dark:bg-white text-white dark:text-black hover:bg-gray-800 dark:hover:bg-gray-200">
-                          Upgrade
-                        </Button>
-                      </div>
-                      <div className="space-y-2 pl-6">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-600 dark:text-gray-400">Total</span>
-                          <span className="font-medium text-gray-900 dark:text-white">10,000</span>
-                        </div>
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-600 dark:text-gray-400">Remaining</span>
-                          <span className="font-medium text-gray-900 dark:text-white">10,000</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Settings Section */}
-                    <div className="space-y-3">
-                      <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Settings</h4>
-                      <div className="space-y-1">
-                        <button className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 text-left transition-colors">
-                          <span className="text-sm text-gray-700 dark:text-gray-300">Subscription</span>
-                        </button>
-                        <button className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 text-left transition-colors">
-                          <span className="text-sm text-gray-700 dark:text-gray-300">Pronunciation dictionaries</span>
-                        </button>
-                        <button className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 text-left transition-colors">
-                          <span className="text-sm text-gray-700 dark:text-gray-300">Theme</span>
-                          <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Voiceover Studio Section */}
-                    <div className="space-y-3">
-                      <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Voiceover Studio</h4>
-                      <div className="space-y-1">
-                        <button className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 text-left transition-colors">
-                          <div className="flex items-center gap-2">
-                            <BookOpen className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                            <span className="text-sm text-gray-700 dark:text-gray-300">Docs and resources</span>
-                          </div>
-                          <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500" />
-                        </button>
-                        <button className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 text-left transition-colors">
-                          <div className="flex items-center gap-2">
-                            <FileText className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                            <span className="text-sm text-gray-700 dark:text-gray-300">Terms and privacy</span>
-                          </div>
-                          <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Sign Out */}
-                    <div className="pt-4 border-t border-gray-200 dark:border-gray-800">
-                      <button 
-                        className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 text-left transition-colors"
-                        onClick={() => {
-                          setWorkspaceModalOpen(false)
-                          router.push('/')
-                        }}
-                      >
-                        <LogOut className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                        <span className="text-sm text-gray-700 dark:text-gray-300">Sign out</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-    </aside>
+        </div>
+      </aside>
     </>
   )
 }
-

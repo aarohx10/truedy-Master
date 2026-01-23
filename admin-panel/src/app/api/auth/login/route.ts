@@ -82,7 +82,15 @@ export async function POST(request: NextRequest) {
 
     return response
   } catch (error) {
-    console.error('Login error:', error)
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[ADMIN] [LOGIN] Login error (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      errorCause: (rawError as any).cause,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+    })
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

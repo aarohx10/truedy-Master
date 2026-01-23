@@ -42,7 +42,15 @@ export function useSearch(searchTerm: string, options: UseSearchOptions = {}) {
       try {
         setRecentSearches(JSON.parse(saved))
       } catch (error) {
-        console.error('Failed to parse recent searches:', error)
+        const rawError = error instanceof Error ? error : new Error(String(error))
+        console.error('[USE_SEARCH] Failed to parse recent searches (RAW ERROR)', {
+          saved,
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          errorName: rawError.name,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        })
       }
     }
   }, [])

@@ -34,7 +34,16 @@ export async function storeOTP(email: string, otpCode: string): Promise<{ succes
 
     return { success: true }
   } catch (error: any) {
-    console.error('Error storing OTP:', error)
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[ADMIN] [OTP] Error storing OTP (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      errorCause: (rawError as any).cause,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      email,
+    })
     return { success: false, error: error.message || 'Failed to store OTP' }
   }
 }
@@ -97,8 +106,17 @@ export async function verifyOTP(email: string, otpCode: string): Promise<{ succe
 
     return { success: false, error: 'Invalid OTP code' }
   } catch (error: any) {
-    console.error('Error verifying OTP:', error)
-    return { success: false, error: error.message || 'Failed to verify OTP' }
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[ADMIN] [OTP] Error verifying OTP (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      errorCause: (rawError as any).cause,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      email,
+    })
+    return { success: false, error: rawError.message || 'Failed to verify OTP' }
   }
 }
 
@@ -128,7 +146,16 @@ export async function checkOTPRateLimit(email: string): Promise<{ allowed: boole
 
     return { allowed: true }
   } catch (error: any) {
-    console.error('Error checking rate limit:', error)
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[ADMIN] [OTP] Error checking rate limit (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      errorCause: (rawError as any).cause,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      email,
+    })
     return { allowed: true } // Allow on error
   }
 }
@@ -140,6 +167,14 @@ export async function cleanupExpiredOTPs(): Promise<void> {
   try {
     await supabaseAdmin.rpc('cleanup_expired_otps')
   } catch (error) {
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[ADMIN] [OTP] Error in cleanup (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+    })
     // If RPC doesn't exist, do manual cleanup
     const { error: deleteError } = await supabaseAdmin
       .from('admin_otps')

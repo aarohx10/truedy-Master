@@ -253,17 +253,33 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
       }
 
       setIsCreating(true)
+      const voiceData = {
+        name: voiceName,
+        strategy: 'external' as const,
+        source: {
+          type: 'external' as const,
+          provider_voice_id: providerVoiceId.trim() || undefined,
+        },
+        provider_overrides: {
+          provider: selectedProvider,
+        },
+      }
+      
+      console.log('[VOICE_IMPORT] Starting voice import', {
+        voiceName,
+        selectedProvider,
+        providerVoiceId: providerVoiceId.trim(),
+        voiceData,
+        fullVoiceData: JSON.stringify(voiceData, null, 2),
+      })
+      
       try {
-        await createVoiceMutation.mutateAsync({
-          name: voiceName,
-          strategy: 'external',
-          source: {
-            type: 'external',
-            provider_voice_id: providerVoiceId.trim() || undefined,
-          },
-          provider_overrides: {
-            provider: selectedProvider,
-          },
+        const result = await createVoiceMutation.mutateAsync(voiceData)
+        
+        console.log('[VOICE_IMPORT] Voice import successful (RAW RESPONSE)', {
+          voiceName,
+          result,
+          fullResult: JSON.stringify(result, null, 2),
         })
 
         toast({
@@ -281,19 +297,38 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
 
         resetForm()
       } catch (error) {
+        // Log RAW error with full details
+        const rawError = error instanceof Error ? error : new Error(String(error))
+        console.error('[VOICE_IMPORT] Error importing voice (RAW ERROR)', {
+          voiceName,
+          selectedProvider,
+          providerVoiceId: providerVoiceId.trim(),
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          errorName: rawError.name,
+          errorCause: (rawError as any).cause,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        })
+        
         toast({
           title: 'Error creating voice',
-          description: error instanceof Error ? error.message : 'Failed to create voice',
+          description: rawError.message || 'Failed to create voice',
           variant: 'destructive',
+          duration: 10000, // Show longer for debugging
         })
       } finally {
         setIsCreating(false)
         isProcessingRef.current = false
+        console.log('[VOICE_IMPORT] Voice import finished', {
+          voiceName,
+          isCreating: false,
+        })
       }
       return
     }
 
-    // For voice clone (native) - SIMPLIFIED: Direct FormData upload
+    // For voice clone (native) - SIMPLIFIED: Single file upload to /voices/clone
     if (activeTab === 'voice-clone') {
       if (uploadedFiles.length === 0) {
         isProcessingRef.current = false
@@ -305,25 +340,48 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
         return
       }
 
+      // Use first file only (simplified - can be extended later)
+      if (uploadedFiles.length > 1) {
+        toast({
+          title: 'Multiple files',
+          description: 'Using first file. Multiple files support coming soon.',
+        })
+      }
+
       setIsCreating(true)
+      console.log('[VOICE_CLONE] Starting voice clone creation', {
+        voiceName,
+        fileName: uploadedFiles[0].file.name,
+        fileSize: uploadedFiles[0].file.size,
+        fileType: uploadedFiles[0].file.type,
+        fileLastModified: uploadedFiles[0].file.lastModified,
+      })
+      
       try {
-        // Create FormData - ONE REQUEST, that's it!
+        // Create FormData - ONE REQUEST to /voices/clone
         const formData = new FormData()
         formData.append('name', voiceName)
-        formData.append('strategy', 'native')
-        formData.append('provider', 'elevenlabs')
-        
-        // Add files directly
-        uploadedFiles.forEach((file) => {
-          formData.append('files', file.file)
+        formData.append('file', uploadedFiles[0].file)
+
+        console.log('[VOICE_CLONE] FormData created', {
+          voiceName,
+          formDataKeys: Array.from(formData.keys()),
+          fileInFormData: formData.has('file'),
+          nameInFormData: formData.has('name'),
         })
 
-        // ONE API call - no presign, no separate uploads
-        await apiClient.upload('/voices', formData)
+        // Direct POST to /voices/clone endpoint
+        const result = await apiClient.upload('/voices/clone', formData)
+        
+        console.log('[VOICE_CLONE] Upload successful (RAW RESPONSE)', {
+          voiceName,
+          result,
+          fullResult: JSON.stringify(result, null, 2),
+        })
 
         toast({
           title: 'Voice created',
-          description: `"${voiceName}" is being trained. This may take a few minutes.`,
+          description: `"${voiceName}" has been cloned successfully.`,
         })
 
         if (onSave) {
@@ -335,14 +393,33 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
 
         resetForm()
       } catch (error) {
+        // Log RAW error with full details
+        const rawError = error instanceof Error ? error : new Error(String(error))
+        console.error('[VOICE_CLONE] Error creating voice (RAW ERROR)', {
+          voiceName,
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          errorName: rawError.name,
+          errorCause: (rawError as any).cause,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+          fileName: uploadedFiles[0]?.file?.name,
+          fileSize: uploadedFiles[0]?.file?.size,
+        })
+        
         toast({
           title: 'Error creating voice',
-          description: error instanceof Error ? error.message : 'Failed to create voice',
+          description: rawError.message || 'Failed to create voice',
           variant: 'destructive',
+          duration: 10000, // Show longer for debugging
         })
       } finally {
         setIsCreating(false)
         isProcessingRef.current = false
+        console.log('[VOICE_CLONE] Voice clone creation finished', {
+          voiceName,
+          isCreating: false,
+        })
       }
     }
   }

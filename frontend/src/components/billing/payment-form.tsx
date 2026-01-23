@@ -60,7 +60,17 @@ export function PaymentForm({
         onSuccess()
       }
     } catch (err: any) {
-      setError(err.message || 'An error occurred')
+      const rawError = err instanceof Error ? err : new Error(String(err))
+      console.error('[PAYMENT_FORM] Payment processing error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCode: err.code,
+        errorType: err.type,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      setError(rawError.message || 'An error occurred')
       setIsProcessing(false)
     }
   }

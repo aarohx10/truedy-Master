@@ -31,7 +31,15 @@ export function LogsStatistics() {
       const data = await response.json()
       setStats(data.data)
     } catch (error) {
-      console.error('Error loading statistics:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ADMIN] [LOGS_STATISTICS] Error loading statistics (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
     } finally {
       setIsLoading(false)
     }

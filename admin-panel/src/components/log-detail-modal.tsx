@@ -57,7 +57,16 @@ export function LogDetailModal({ log, onClose }: LogDetailModalProps) {
       const data = await response.json()
       setRelatedLogs(data.data.related_logs || [])
     } catch (error) {
-      console.error('Error loading related logs:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ADMIN] [LOG_DETAIL] Error loading related logs (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        logId,
+      })
     }
   }
 

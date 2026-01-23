@@ -20,7 +20,16 @@ export async function getServerAuthConfig() {
     try {
       token = await getToken()
     } catch (error) {
-      console.error('Error getting Clerk token in server context:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[CLERK_AUTH_SERVER] Error getting Clerk token in server context (RAW ERROR)', {
+        userId,
+        orgId,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
       return { token: null, clientId: null, userId: null, orgId: null }
     }
     
@@ -32,7 +41,14 @@ export async function getServerAuthConfig() {
     // In the future, we can get it from organization metadata
     return { token, clientId: null, userId, orgId }
   } catch (error) {
-    console.error('Error getting auth config:', error)
+    const rawError = error instanceof Error ? error : new Error(String(error))
+    console.error('[CLERK_AUTH_SERVER] Error getting auth config (RAW ERROR)', {
+      error: rawError,
+      errorMessage: rawError.message,
+      errorStack: rawError.stack,
+      errorName: rawError.name,
+      fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+    })
     return { token: null, clientId: null, userId: null, orgId: null }
   }
 }

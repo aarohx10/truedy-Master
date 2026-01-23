@@ -218,11 +218,23 @@ export default function NewCampaignPage() {
 
         setParsedData(data)
       } catch (error) {
-        console.error('Error parsing file:', error)
+        const rawError = error instanceof Error ? error : new Error(String(error))
+        console.error('[NEW_CAMPAIGN_PAGE] Error parsing file (RAW ERROR)', {
+          fileName: uploadedFile?.name,
+          fileSize: uploadedFile?.size,
+          fileType: uploadedFile?.type,
+          error: rawError,
+          errorMessage: rawError.message,
+          errorStack: rawError.stack,
+          errorName: rawError.name,
+          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+        })
+        
         toast({
           title: 'Error parsing file',
-          description: error instanceof Error ? error.message : 'Failed to parse file',
+          description: rawError.message || 'Failed to parse file',
           variant: 'destructive',
+          duration: 10000,
         })
         setParsedData(null)
       } finally {

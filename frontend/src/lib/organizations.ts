@@ -27,7 +27,16 @@ export function useOrganizationSync() {
         console.log('Organization synced with client:', userData.client_id)
       }
     } catch (error) {
-      console.error('Failed to sync organization:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ORGANIZATIONS] Failed to sync organization (RAW ERROR)', {
+        organizationId: organization?.id,
+        userId: user?.id,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
     }
   }
 
@@ -60,7 +69,15 @@ export function useOrganizationMembers() {
         lastActive: membership.updatedAt?.toISOString() || '',
       }))
     } catch (error) {
-      console.error('Failed to get organization members:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ORGANIZATIONS] Failed to get organization members (RAW ERROR)', {
+        organizationId: organization?.id,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
       return []
     }
   }
@@ -84,8 +101,18 @@ export function useInviteMember() {
       const invitation = await organization.inviteMember({ emailAddress: email, role })
       return invitation
     } catch (error) {
-      console.error('Failed to invite member:', error)
-      throw error
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ORGANIZATIONS] Failed to invite member (RAW ERROR)', {
+        email,
+        role,
+        organizationId: organization?.id,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      throw rawError
     }
   }
 
@@ -114,8 +141,17 @@ export function useCreateOrganization() {
       const org = await createOrganization({ name })
       return org
     } catch (error) {
-      console.error('Failed to create organization:', error)
-      throw error
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ORGANIZATIONS] Failed to create organization (RAW ERROR)', {
+        name,
+        userId: user?.id,
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
+      throw rawError
     }
   }
 

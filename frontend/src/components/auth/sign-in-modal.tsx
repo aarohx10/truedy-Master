@@ -44,7 +44,15 @@ export function SignInModal({ open, onOpenChange }: SignInModalProps) {
         }
       })
     } catch (error) {
-      console.error('Google sign-in error:', error)
+      const rawError = error instanceof Error ? error : new Error(String(error))
+      console.error('[SIGN_IN_MODAL] Google sign-in error (RAW ERROR)', {
+        error: rawError,
+        errorMessage: rawError.message,
+        errorStack: rawError.stack,
+        errorName: rawError.name,
+        errorCause: (rawError as any).cause,
+        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      })
     } finally {
       setIsLoading(false)
     }
