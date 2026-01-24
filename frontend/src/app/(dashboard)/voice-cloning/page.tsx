@@ -56,9 +56,6 @@ import { apiClient, endpoints } from '@/lib/api'
 import { logger } from '@/lib/logger'
 
 
-// Community voices library - empty until backend endpoint is implemented
-const mockVoices: any[] = []
-
 import { VoiceListItemSkeleton } from '@/components/ui/list-skeleton'
 
 export default function VoiceCloningPage() {
@@ -184,11 +181,25 @@ export default function VoiceCloningPage() {
     // Check if voice is active (only for custom voices - Ultravox voices don't have status)
     // For custom voices, check status; for Ultravox voices (no status field), allow preview
     if (voice.status && voice.status !== 'active') {
-      toast({
-        title: 'Voice not ready',
-        description: 'Voice must be active to preview. Please wait for training to complete.',
-        variant: 'destructive',
-      })
+      if (voice.status === 'training') {
+        toast({
+          title: 'Voice is still training',
+          description: voice.training_info?.message || 'Voice is still being cloned. Preview will be available when training completes.',
+          variant: 'default',
+        })
+      } else if (voice.status === 'failed') {
+        toast({
+          title: 'Voice training failed',
+          description: voice.training_info?.message || 'Voice cloning failed. Please try creating a new voice.',
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Voice not ready',
+          description: 'Voice must be active to preview. Please wait for training to complete.',
+          variant: 'destructive',
+        })
+      }
       return
     }
 
@@ -297,6 +308,8 @@ export default function VoiceCloningPage() {
       case 'active':
         return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
       case 'training':
+      case 'processing':  // Legacy status for backward compatibility
+      case 'creating':    // Legacy status for backward compatibility
         return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
       case 'failed':
         return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
@@ -758,12 +771,24 @@ export default function VoiceCloningPage() {
                         <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
                           {voice.type === 'custom' ? 'Custom voice' : 'Reference voice'} • {voice.provider}
                         </p>
-                        {/* Mobile: Show language and status inline */}
+                        {/* Mobile: Show language, status, and progress inline */}
                         <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 mt-1 sm:hidden">
                           <span>{voice.language}</span>
                           <span>•</span>
                           <span>{createdDate}</span>
+                          {voice.status === 'training' && voice.training_info?.progress !== undefined && (
+                            <>
+                              <span>•</span>
+                              <span className="font-medium">{voice.training_info.progress}%</span>
+                            </>
+                          )}
                         </div>
+                        {/* Mobile: Show training message if available */}
+                        {voice.status === 'training' && voice.training_info?.message && (
+                          <div className="text-xs text-gray-500 dark:text-gray-500 mt-1 sm:hidden truncate">
+                            {voice.training_info.message}
+                          </div>
+                        )}
                       </div>
 
                       {/* Actions - Mobile */}
@@ -831,10 +856,25 @@ export default function VoiceCloningPage() {
                       </div>
 
                       {/* Training Progress (if training) */}
-                      {voice.status === 'training' && voice.training_info?.progress !== undefined && (
-                        <div className="text-sm text-gray-600 dark:text-gray-400 min-w-[80px]">
-                          {voice.training_info.progress}%
-                      </div>
+                      {voice.status === 'training' && (
+                        <div className="text-sm text-gray-600 dark:text-gray-400 min-w-[120px]">
+                          <div className="flex items-center gap-2 mb-1">
+                            <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-primary transition-all duration-300"
+                                style={{ width: `${voice.training_info?.progress || 0}%` }}
+                              />
+                            </div>
+                            <span className="text-xs font-medium min-w-[35px]">
+                              {voice.training_info?.progress || 0}%
+                            </span>
+                          </div>
+                          {voice.training_info?.message && (
+                            <div className="text-xs text-gray-500 dark:text-gray-500 truncate max-w-[200px]">
+                              {voice.training_info.message}
+                            </div>
+                          )}
+                        </div>
                       )}
 
                       {/* Actions */}
@@ -1039,7 +1079,7 @@ export default function VoiceCloningPage() {
                   {['Any', '30 days', '90 days', '180 days', '1 year', '2 years'].map((period) => (
                     <button
                       key={period}
-                      onClick={() => setSelectedNoticePeriod(period)}
+                      onClick={() => setFilters({...filters, noticePeriod: period})}
                       className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                         filters.noticePeriod === period
                           ? 'bg-gray-900 dark:bg-white text-white dark:text-black'

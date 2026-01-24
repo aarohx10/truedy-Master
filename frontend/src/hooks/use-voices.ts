@@ -58,8 +58,13 @@ export function useVoices(source?: 'ultravox' | 'custom') {
     staleTime: 1000 * 60,
     gcTime: 1000 * 60 * 10,
     refetchInterval: (query) => {
-      // Auto-refetch if any voice is training
-      return query.data?.some(v => v.status === 'training') ? 3000 : false
+      // Auto-refetch if any voice is training (or legacy statuses for backward compatibility)
+      const hasTrainingVoice = query.data?.some(v => 
+        v.status === 'training' || 
+        v.status === 'processing' || 
+        v.status === 'creating'
+      )
+      return hasTrainingVoice ? 3000 : false
     },
   })
 }

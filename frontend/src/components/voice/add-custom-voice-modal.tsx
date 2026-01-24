@@ -328,7 +328,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
       return
     }
 
-    // For voice clone (native) - SIMPLIFIED: Single file upload to /voices/clone
+    // For voice clone (native) - Use unified /voices endpoint with strategy="native"
     if (activeTab === 'voice-clone') {
       if (uploadedFiles.length === 0) {
         isProcessingRef.current = false
@@ -358,20 +358,22 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
       })
       
       try {
-        // Create FormData - ONE REQUEST to /voices/clone
+        // Create FormData - Use unified /voices endpoint with strategy="native"
         const formData = new FormData()
         formData.append('name', voiceName)
-        formData.append('file', uploadedFiles[0].file)
+        formData.append('strategy', 'native')
+        formData.append('files', uploadedFiles[0].file)
 
         console.log('[VOICE_CLONE] FormData created', {
           voiceName,
           formDataKeys: Array.from(formData.keys()),
-          fileInFormData: formData.has('file'),
+          fileInFormData: formData.has('files'),
           nameInFormData: formData.has('name'),
+          strategyInFormData: formData.has('strategy'),
         })
 
-        // Direct POST to /voices/clone endpoint
-        const result = await apiClient.upload('/voices/clone', formData)
+        // Use unified /voices endpoint with multipart form-data
+        const result = await apiClient.upload('/voices', formData)
         
         console.log('[VOICE_CLONE] Upload successful (RAW RESPONSE)', {
           voiceName,

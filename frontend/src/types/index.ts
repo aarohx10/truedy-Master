@@ -75,11 +75,15 @@ export interface Voice {
   type: 'custom' | 'reference';
   language: string;
   status: VoiceStatus;
+  description?: string;
   training_info?: {
     progress?: number;
+    message?: string;
     started_at?: string;
     completed_at?: string;
+    error_at?: string;
     estimated_completion?: string;
+    updated_at?: string;
   };
   provider_voice_id?: string; // ElevenLabs voice ID for external voices
   ultravox_voice_id?: string;
@@ -87,6 +91,12 @@ export interface Voice {
   updated_at: string;
 }
 
+/**
+ * Voice status lifecycle:
+ * - 'training': Voice is being cloned/trained (background processing)
+ * - 'active': Voice is ready to use
+ * - 'failed': Voice creation/training failed
+ */
 export type VoiceStatus = 'training' | 'active' | 'failed';
 
 export interface VoiceSettings {
