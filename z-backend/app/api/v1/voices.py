@@ -12,7 +12,7 @@ import httpx
 
 from app.core.auth import get_current_user
 from app.core.database import DatabaseService
-from app.core.exceptions import NotFoundError, ValidationError, PaymentRequiredError, ForbiddenError, ProviderError
+from app.core.exceptions import NotFoundError, ValidationError, ForbiddenError, ProviderError
 from app.models.schemas import VoiceResponse, ResponseMeta
 from app.core.config import settings
 from app.services.ultravox import ultravox_client
@@ -54,19 +54,21 @@ async def create_voice(
         if current_user["role"] not in ["client_admin", "agency_admin"]:
             raise ForbiddenError("Insufficient permissions")
         
-        db = DatabaseService(current_user["token"])
-        db.set_auth(current_user["token"])
-        
         # Determine if JSON or multipart
         content_type = request.headers.get("content-type", "")
         is_json = "application/json" in content_type
         
         logger.info(f"[VOICES] Creating voice | content_type={content_type} | is_json={is_json}")
         
+        import time
+        parse_start = time.time()
+        
         if is_json:
             # JSON request (for imports)
+            logger.info(f"[VOICES] Parsing JSON body...")
             body = await request.json()
-            logger.info(f"[VOICES] JSON body received | body_keys={list(body.keys()) if isinstance(body, dict) else 'not_dict'}")
+            parse_time = time.time() - parse_start
+            logger.info(f"[VOICES] JSON body received | body_keys={list(body.keys()) if isinstance(body, dict) else 'not_dict'} | parse_time={parse_time:.2f}s")
             name = body.get("name")
             strategy = body.get("strategy")
             source = body.get("source", {})
@@ -75,13 +77,17 @@ async def create_voice(
             provider_voice_id = source.get("provider_voice_id")
             files = []
         else:
-            # Multipart form data (for clones)
+            # Multipart form data (for clones) - parse form (FastAPI handles streaming)
+            logger.info(f"[VOICES] Parsing multipart form data...")
             form = await request.form()
+            parse_time = time.time() - parse_start
+            logger.info(f"[VOICES] Form data parsed | parse_time={parse_time:.2f}s")
             name = form.get("name")
             strategy = form.get("strategy")
             provider = form.get("provider", "elevenlabs")
             provider_voice_id = form.get("provider_voice_id")
             files = form.getlist("files")
+            logger.info(f"[VOICES] Form fields extracted | name={name} | strategy={strategy} | files_count={len(files) if files else 0}")
         
         logger.info(f"[VOICES] Parsed request | name={name} | strategy={strategy} | provider={provider} | provider_voice_id={provider_voice_id}")
         
@@ -103,88 +109,162 @@ async def create_voice(
             if not settings.ULTRAVOX_API_KEY:
                 raise ValidationError("Ultravox API key is not configured")
             
-            # Credit check
-            client = db.get_client(client_id)
-            if not client or client.get("credits_balance", 0) < 50:
-                raise PaymentRequiredError(
-                    "Insufficient credits for voice cloning. Required: 50",
-                    {"required": 50, "available": client.get("credits_balance", 0) if client else 0},
-                )
-            
-            # Step 1: Clone in ElevenLabs
-            logger.info(f"[VOICES] Cloning voice in ElevenLabs | name={name}")
+            # Step 1: Clone in ElevenLabs (NO DB, NO CREDITS - matches test script)
+            start_time = time.time()
+            logger.info(f"[VOICES] Cloning voice in ElevenLabs | name={name} | files_count={len(files)}")
             files_data = []
             for file_item in files:
                 if isinstance(file_item, UploadFile):
+                    file_read_start = time.time()
                     content = await file_item.read()
+                    file_read_time = time.time() - file_read_start
+                    logger.info(f"[VOICES] File read completed | filename={file_item.filename} | size={len(content)} bytes | time={file_read_time:.2f}s")
                     filename = file_item.filename or "audio.mp3"
                     content_type = file_item.content_type or "audio/mpeg"
                     files_data.append(("files", (filename, content, content_type)))
             
-            async with httpx.AsyncClient(timeout=120.0) as http_client:
-                elevenlabs_response = await http_client.post(
-                    "https://api.elevenlabs.io/v1/voices/add",
-                    headers={"xi-api-key": settings.ELEVENLABS_API_KEY},
-                    data={"name": name},
-                    files=files_data,
+            try:
+                elevenlabs_start = time.time()
+                logger.info(f"[VOICES] Starting ElevenLabs API call | timeout=120s")
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    elevenlabs_response = await client.post(
+                        "https://api.elevenlabs.io/v1/voices/add",
+                        headers={"xi-api-key": settings.ELEVENLABS_API_KEY},
+                        data={"name": name},
+                        files=files_data,
+                    )
+                    
+                    if elevenlabs_response.status_code >= 400:
+                        error_text = elevenlabs_response.text[:500] if elevenlabs_response.text else "No response body"
+                        raise ProviderError(
+                            provider="elevenlabs",
+                            message=f"ElevenLabs voice cloning failed: {error_text}",
+                            http_status=elevenlabs_response.status_code,
+                        )
+                    
+                    elevenlabs_data = elevenlabs_response.json()
+                    elevenlabs_voice_id = elevenlabs_data.get("voice_id")
+                    
+                    if not elevenlabs_voice_id:
+                        raise ProviderError(
+                            provider="elevenlabs",
+                            message="ElevenLabs response missing voice_id",
+                            http_status=500,
+                        )
+                elevenlabs_time = time.time() - elevenlabs_start
+                logger.info(f"[VOICES] ElevenLabs API call completed | time={elevenlabs_time:.2f}s")
+            except httpx.TimeoutException as e:
+                logger.error(f"[VOICES] ElevenLabs timeout after 120s | error={str(e)}")
+                raise ProviderError(
+                    provider="elevenlabs",
+                    message="ElevenLabs API request timed out after 120 seconds. The voice cloning may still be processing. Please try again later.",
+                    http_status=504,
                 )
-                
-                if elevenlabs_response.status_code >= 400:
-                    error_text = elevenlabs_response.text[:500] if elevenlabs_response.text else "No response body"
-                    raise ProviderError(
-                        provider="elevenlabs",
-                        message=f"ElevenLabs voice cloning failed: {error_text}",
-                        http_status=elevenlabs_response.status_code,
-                    )
-                
-                elevenlabs_data = elevenlabs_response.json()
-                elevenlabs_voice_id = elevenlabs_data.get("voice_id")
-                
-                if not elevenlabs_voice_id:
-                    raise ProviderError(
-                        provider="elevenlabs",
-                        message="ElevenLabs response missing voice_id",
-                        http_status=500,
-                    )
+            except httpx.RequestError as e:
+                logger.error(f"[VOICES] ElevenLabs request error | error={str(e)} | type={type(e).__name__}")
+                raise ProviderError(
+                    provider="elevenlabs",
+                    message=f"Failed to connect to ElevenLabs API: {str(e)}",
+                    http_status=502,
+                )
             
-            logger.info(f"[VOICES] ElevenLabs clone successful | voice_id={elevenlabs_voice_id}")
+            total_elevenlabs_time = time.time() - start_time
+            logger.info(f"[VOICES] ElevenLabs clone successful | voice_id={elevenlabs_voice_id} | total_time={total_elevenlabs_time:.2f}s")
             
-            # Step 2: Import to Ultravox
+            # Step 2: Import to Ultravox - EXACT COPY OF TEST SCRIPT
+            ultravox_start = time.time()
             logger.info(f"[VOICES] Importing to Ultravox | elevenlabs_voice_id={elevenlabs_voice_id}")
-            ultravox_response = await ultravox_client.import_voice_from_provider(
-                name=name,
-                provider="elevenlabs",
-                provider_voice_id=elevenlabs_voice_id,
-                description=f"Cloned voice: {name}",
-            )
-            # Log full response for debugging
-            logger.info(f"[VOICES] Ultravox clone response received | response_keys={list(ultravox_response.keys()) if isinstance(ultravox_response, dict) else 'not_dict'}")
             
-            # Extract voice ID - try multiple possible field names
+            # Normalize name exactly like test script (line 87-92)
+            normalized_name = name.lower().replace(" ", "_").replace("-", "_")
+            normalized_name = "".join(c if c.isalnum() or c == "_" else "" for c in normalized_name)
+            normalized_name = f"{normalized_name}_{elevenlabs_voice_id}"
+            
+            # Build payload exactly like test script (line 95-117)
+            url = f"{settings.ULTRAVOX_BASE_URL}/api/voices"
+            payload = {
+                "name": normalized_name,
+            }
+            description = f"Cloned voice: {name}"
+            if description:
+                payload["description"] = description
+            payload["definition"] = {
+                "elevenLabs": {
+                    "voiceId": elevenlabs_voice_id,
+                    "model": "eleven_multilingual_v2",
+                    "stability": 0.5,
+                    "similarityBoost": 0.75,
+                    "style": 0.0,
+                    "useSpeakerBoost": True,
+                    "speed": 1.0,
+                }
+            }
+            
+            headers = {
+                "X-API-Key": settings.ULTRAVOX_API_KEY,
+                "Content-Type": "application/json",
+            }
+            
+            # Direct HTTP call exactly like test script (line 129-135)
+            try:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    ultravox_response = await client.post(
+                        url,
+                        headers=headers,
+                        json=payload,
+                    )
+                    
+                    if ultravox_response.status_code >= 400:
+                        error_text = ultravox_response.text[:500] if ultravox_response.text else "No response body"
+                        raise ProviderError(
+                            provider="ultravox",
+                            message=f"Ultravox import failed: {error_text}",
+                            http_status=ultravox_response.status_code,
+                        )
+                    
+                    ultravox_data = ultravox_response.json()
+                ultravox_time = time.time() - ultravox_start
+                logger.info(f"[VOICES] Ultravox API call completed | time={ultravox_time:.2f}s")
+            except httpx.TimeoutException as e:
+                logger.error(f"[VOICES] Ultravox timeout after 120s | error={str(e)}")
+                raise ProviderError(
+                    provider="ultravox",
+                    message="Ultravox API request timed out after 120 seconds. The voice import may still be processing. Please try again later.",
+                    http_status=504,
+                )
+            except httpx.RequestError as e:
+                logger.error(f"[VOICES] Ultravox request error | error={str(e)} | type={type(e).__name__}")
+                raise ProviderError(
+                    provider="ultravox",
+                    message=f"Failed to connect to Ultravox API: {str(e)}",
+                    http_status=502,
+                )
+            
+            # Extract voice ID exactly like test script (line 151-157)
             ultravox_voice_id = (
-                ultravox_response.get("voiceId") or 
-                ultravox_response.get("id") or
-                ultravox_response.get("voice_id") or
-                (ultravox_response.get("data", {}) if isinstance(ultravox_response.get("data"), dict) else {}).get("voiceId") or
-                (ultravox_response.get("data", {}) if isinstance(ultravox_response.get("data"), dict) else {}).get("id")
+                ultravox_data.get("voiceId") or
+                ultravox_data.get("id") or
+                ultravox_data.get("voice_id") or
+                (ultravox_data.get("data", {}) if isinstance(ultravox_data.get("data"), dict) else {}).get("voiceId") or
+                (ultravox_data.get("data", {}) if isinstance(ultravox_data.get("data"), dict) else {}).get("id")
             )
             
             if not ultravox_voice_id:
-                import json
-                response_str = json.dumps(ultravox_response, default=str)[:1000]
-                logger.error(f"[VOICES] Ultravox clone response missing voiceId | response={response_str} | response_keys={list(ultravox_response.keys()) if isinstance(ultravox_response, dict) else 'N/A'}")
                 raise ProviderError(
                     provider="ultravox",
-                    message=f"Ultravox response missing voiceId. Response structure: {list(ultravox_response.keys()) if isinstance(ultravox_response, dict) else 'not a dict'}",
+                    message="Ultravox response missing voiceId",
                     http_status=500,
-                    details={"response": ultravox_response},
+                    details={"response": ultravox_data},
                 )
             
-            logger.info(f"[VOICES] Extracted ultravox_voice_id from clone | ultravox_voice_id={ultravox_voice_id}")
+            total_ultravox_time = time.time() - ultravox_start
+            logger.info(f"[VOICES] Ultravox import successful | ultravox_voice_id={ultravox_voice_id} | total_time={total_ultravox_time:.2f}s")
             
-            logger.info(f"[VOICES] Ultravox import successful | ultravox_voice_id={ultravox_voice_id}")
+            # Step 3: Save to DB (AFTER both API calls succeed - no credit checks, no credit updates)
+            db_start = time.time()
+            db = DatabaseService(current_user["token"])
+            db.set_auth(current_user["token"])
             
-            # Step 3: Save to DB
             voice_record = {
                 "id": voice_id,
                 "client_id": client_id,
@@ -200,14 +280,9 @@ async def create_voice(
                 "updated_at": now.isoformat(),
             }
             db.insert("voices", voice_record)
-            
-            # Deduct credits
-            db.update("clients", {"id": client_id}, {
-                "credits_balance": client.get("credits_balance", 0) - 50,
-                "updated_at": now.isoformat(),
-            })
-            
-            logger.info(f"[VOICES] Voice cloned successfully | voice_id={voice_id}")
+            db_time = time.time() - db_start
+            total_time = time.time() - start_time
+            logger.info(f"[VOICES] Voice cloned successfully | voice_id={voice_id} | db_time={db_time:.2f}s | total_time={total_time:.2f}s")
             
             return {
                 "data": VoiceResponse(**voice_record),
@@ -261,7 +336,10 @@ async def create_voice(
                 
                 logger.info(f"[VOICES] Ultravox import successful | ultravox_voice_id={ultravox_voice_id}")
                 
-                # Step 2: Save to DB
+                # Step 2: Save to DB (AFTER Ultravox import succeeds - no credit checks)
+                db = DatabaseService(current_user["token"])
+                db.set_auth(current_user["token"])
+                
                 voice_record = {
                     "id": voice_id,
                     "client_id": client_id,
@@ -303,7 +381,7 @@ async def create_voice(
                     http_status=500,
                 )
     
-    except (ValidationError, PaymentRequiredError, ForbiddenError, NotFoundError, ProviderError):
+    except (ValidationError, ForbiddenError, NotFoundError, ProviderError):
         # Re-raise known errors as-is
         raise
     except Exception as e:
