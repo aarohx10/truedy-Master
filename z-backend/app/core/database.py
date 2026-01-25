@@ -98,7 +98,7 @@ class DatabaseService:
     # Generic CRUD operations
     def select(self, table: str, filters: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None) -> List[Dict[str, Any]]:
         """Select records from table"""
-        # #region agent log
+        # #region debug log
         import json
         try:
             with open(r"d:\Users\Admin\Downloads\Truedy Main\.cursor\debug.log", "a", encoding="utf-8") as f:
@@ -181,14 +181,6 @@ class DatabaseService:
     def get_voice(self, voice_id: str, client_id: str) -> Optional[Dict[str, Any]]:
         """Get voice by ID"""
         return self.select_one("voices", {"id": voice_id, "client_id": client_id})
-    
-    def get_agent(self, agent_id: str, client_id: str) -> Optional[Dict[str, Any]]:
-        """Get agent by ID"""
-        return self.select_one("agents", {"id": agent_id, "client_id": client_id})
-    
-    def get_knowledge_base(self, kb_id: str, client_id: str) -> Optional[Dict[str, Any]]:
-        """Get knowledge base by ID"""
-        return self.select_one("knowledge_documents", {"id": kb_id, "client_id": client_id})
     
     def get_campaign(self, campaign_id: str, client_id: str) -> Optional[Dict[str, Any]]:
         """Get campaign by ID"""
@@ -280,43 +272,14 @@ class DatabaseAdminService:
         response = query.execute()
         return len(response.data) > 0
     
-    def insert_chunks_batch(self, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Batch insert knowledge base chunks (bypasses RLS)"""
-        if not chunks:
-            return []
+    def count(self, table: str, filters: Optional[Dict[str, Any]] = None) -> int:
+        """Count records (bypasses RLS)"""
+        query = self.client.table(table).select("*", count="exact")
         
-        # Supabase has a limit on batch inserts, so we'll do it in smaller batches
-        batch_size = 100
-        all_results = []
+        if filters:
+            for key, value in filters.items():
+                query = query.eq(key, value)
         
-        for i in range(0, len(chunks), batch_size):
-            batch = chunks[i:i + batch_size]
-            response = self.client.table("knowledge_base_chunks").insert(batch).execute()
-            if response.data:
-                all_results.extend(response.data)
-        
-        return all_results
-    
-    def match_kb_documents(
-        self,
-        query_embedding: List[float],
-        kb_id: str,
-        match_threshold: float = 0.7,
-        match_count: int = 3,
-    ) -> List[Dict[str, Any]]:
-        """
-        Call the match_kb_documents RPC function to perform similarity search.
-        Returns top matching chunks with similarity scores.
-        """
-        response = self.client.rpc(
-            "match_kb_documents",
-            {
-                "query_embedding": query_embedding,
-                "target_kb_id": kb_id,
-                "match_threshold": match_threshold,
-                "match_count": match_count,
-            }
-        ).execute()
-        
-        return response.data if response.data else []
+        response = query.execute()
+        return response.count if response.count else 0
 

@@ -17,36 +17,31 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Phone, Loader2 } from 'lucide-react'
-import { Agent } from '@/types'
 
 interface CreateCallModalProps {
   isOpen: boolean
   onClose: () => void
-  onCreateCall: (data: { agent_id: string; phone_number: string; direction: 'inbound' | 'outbound' }) => void
-  agents: Agent[]
+  onCreateCall: (data: { phone_number: string; direction: 'inbound' | 'outbound' }) => void
   isLoading: boolean
 }
 
-export function CreateCallModal({ isOpen, onClose, onCreateCall, agents, isLoading }: CreateCallModalProps) {
-  const [agentId, setAgentId] = useState('')
+export function CreateCallModal({ isOpen, onClose, onCreateCall, isLoading }: CreateCallModalProps) {
   const [phoneNumber, setPhoneNumber] = useState('')
   // Direction is always outbound
   const direction: 'outbound' = 'outbound'
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!agentId || !phoneNumber.trim()) {
+    if (!phoneNumber.trim()) {
       return
     }
     onCreateCall({
-      agent_id: agentId,
       phone_number: phoneNumber.trim(),
       direction,
     })
   }
 
   const handleClose = () => {
-    setAgentId('')
     setPhoneNumber('')
     onClose()
   }
@@ -61,32 +56,6 @@ export function CreateCallModal({ isOpen, onClose, onCreateCall, agents, isLoadi
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Agent Selection */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-900 dark:text-white">
-              Agent <span className="text-red-500">*</span>
-            </label>
-            <Select value={agentId} onValueChange={setAgentId} required disabled={agents.length === 0}>
-              <SelectTrigger className="w-full bg-white dark:bg-black">
-                <SelectValue placeholder={agents.length === 0 ? "No active agents available" : "Select an agent"} />
-              </SelectTrigger>
-              {agents.length > 0 && (
-                <SelectContent>
-                  {agents.map(agent => (
-                    <SelectItem key={agent.id} value={agent.id}>
-                      {agent.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              )}
-            </Select>
-            {agents.length === 0 && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">
-                Please create and activate an agent first.
-              </p>
-            )}
-          </div>
-
           {/* Phone Number */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-gray-900 dark:text-white">
@@ -118,7 +87,7 @@ export function CreateCallModal({ isOpen, onClose, onCreateCall, agents, isLoadi
             </Button>
             <Button
               type="submit"
-              disabled={!agentId || !phoneNumber.trim() || isLoading || agents.length === 0}
+              disabled={!phoneNumber.trim() || isLoading}
               className="bg-primary hover:bg-primary/90 text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? (

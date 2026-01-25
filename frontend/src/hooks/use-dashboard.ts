@@ -14,8 +14,6 @@ export interface DashboardStats {
   total_campaigns: number
   active_campaigns: number
   completed_campaigns: number
-  total_agents: number
-  active_agents: number
   time_range: string
   start_date: string | null
   end_date: string

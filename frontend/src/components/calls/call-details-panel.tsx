@@ -18,7 +18,6 @@ import {
 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { Call, useCall, useCallTranscript, useCallRecording } from '@/hooks/use-calls'
-import { useAgents } from '@/hooks/use-agents'
 import { formatDate, formatDuration, formatPhoneNumber } from '@/lib/utils'
 import { CALL_STATUSES } from '@/constants'
 
@@ -41,10 +40,8 @@ export function CallDetailsPanel({ isOpen, onClose, call }: CallDetailsPanelProp
   )
   const { data: transcriptData, isLoading: transcriptLoading } = useCallTranscript(call?.id || '')
   const { data: recordingData, isLoading: recordingLoading } = useCallRecording(call?.id || '')
-  const { data: agents = [] } = useAgents()
   
   const currentCall = callData || call
-  const agent = agents.find(a => a.id === currentCall?.agent_id)
 
   useEffect(() => {
     setMounted(true)
@@ -104,7 +101,7 @@ export function CallDetailsPanel({ isOpen, onClose, call }: CallDetailsPanelProp
           <div className="flex items-center justify-between p-4 sm:p-6 border-b border-gray-200 dark:border-gray-900 flex-shrink-0">
             <div className="min-w-0 flex-1 pr-4">
               <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white truncate">
-                Call with {agent?.name || 'Unknown Agent'}
+                Call Details
               </h2>
               <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-500 mt-1 truncate">
                 {formatPhoneNumber(currentCall.phone_number)} • {currentCall.direction}
@@ -182,7 +179,7 @@ export function CallDetailsPanel({ isOpen, onClose, call }: CallDetailsPanelProp
               <div className="flex items-start space-x-3 p-3 sm:p-4 bg-primary/5 border border-primary/20 rounded-lg">
                 <Info className="h-4 w-4 sm:h-5 sm:w-5 text-primary mt-0.5 flex-shrink-0" />
                 <p className="text-xs sm:text-sm text-gray-700 dark:text-gray-300">
-                  You can now ensure your agent returns high quality responses to conversations like this one. Try Tests in the Transcription tab.
+                  You can review the conversation details and transcription below.
                 </p>
               </div>
             </div>
@@ -236,12 +233,6 @@ export function CallDetailsPanel({ isOpen, onClose, call }: CallDetailsPanelProp
                     <div className="flex items-center space-x-2">
                       {getStatusBadge(currentCall.status)}
                     </div>
-                  </div>
-
-                  {/* Agent */}
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">Agent</h3>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">{agent?.name || 'Unknown'}</p>
                   </div>
 
                   {/* Phone Number */}

@@ -511,6 +511,7 @@ export function useAuthClient() {
       lastOrgId = null
       authManager.refreshToken()
     },
+    getToken: getClerkToken,
   }
 }
 

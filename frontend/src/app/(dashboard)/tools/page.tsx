@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { AppLayout } from '@/components/layout/app-layout'
 import { Button } from '@/components/ui/button'
@@ -20,18 +20,35 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Card, CardContent } from '@/components/ui/card'
-import { Wrench, Plus, Search, Loader2, Trash2, ExternalLink } from 'lucide-react'
+import { Wrench, Plus, Search, Loader2, Trash2, ExternalLink, Edit2 } from 'lucide-react'
 import { apiClient, endpoints } from '@/lib/api'
 import { useToast } from '@/hooks/use-toast'
 import { useAuthReady } from '@/lib/clerk-auth-client'
+import { useTools, useCreateTool, useUpdateTool, useDeleteTool, Tool } from '@/hooks/use-tools'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
 
 export default function ToolsPage() {
   const router = useRouter()
   const { toast } = useToast()
   const isAuthReady = useAuthReady()
   
+  const { data: tools = [], isLoading, error } = useTools()
+  const createMutation = useCreateTool()
+  const updateMutation = useUpdateTool()
+  const deleteMutation = useDeleteTool()
+  
   const [searchQuery, setSearchQuery] = useState('')
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [selectedTool, setSelectedTool] = useState<Tool | null>(null)
   const [isCreating, setIsCreating] = useState(false)
   
   // Tool form state
@@ -41,6 +58,27 @@ export default function ToolsPage() {
   const [httpMethod, setHttpMethod] = useState('POST')
   const [baseUrlPattern, setBaseUrlPattern] = useState('')
   const [dynamicParams, setDynamicParams] = useState<Array<{name: string, location: string, schema: any, required: boolean}>>([])
+
+  // Load tool data when editing
+  useEffect(() => {
+    if (selectedTool && editDialogOpen) {
+      setToolName(selectedTool.name)
+      setDescription(selectedTool.description || '')
+      setHttpMethod(selectedTool.method)
+      setBaseUrlPattern(selectedTool.endpoint)
+      setDynamicParams(Array.isArray(selectedTool.parameters) ? selectedTool.parameters : [])
+      // Extract modelToolName from tool definition if available, or generate from name
+      setModelToolName(selectedTool.name.toLowerCase().replace(/\s+/g, '_'))
+    } else if (!editDialogOpen) {
+      // Reset form when dialog closes
+      setToolName('')
+      setModelToolName('')
+      setDescription('')
+      setHttpMethod('POST')
+      setBaseUrlPattern('')
+      setDynamicParams([])
+    }
+  }, [selectedTool, editDialogOpen])
 
   const handleCreateTool = async () => {
     if (!toolName.trim() || !modelToolName.trim() || !description.trim() || !baseUrlPattern.trim()) {
@@ -70,7 +108,7 @@ export default function ToolsPage() {
         definition: {
           modelToolName: modelToolName,
           description: description,
-          dynamicParameters: dynamicParams,
+          dynamicParameters: dynamicParams.length > 0 ? dynamicParams : [],
           http: {
             baseUrlPattern: baseUrlPattern,
             httpMethod: httpMethod,
@@ -78,7 +116,7 @@ export default function ToolsPage() {
         },
       }
 
-      await apiClient.post(endpoints.tools.create, toolDefinition)
+      await createMutation.mutateAsync(toolDefinition)
 
       toast({
         title: 'Tool created',
@@ -93,8 +131,6 @@ export default function ToolsPage() {
       setHttpMethod('POST')
       setDynamicParams([])
       setCreateDialogOpen(false)
-      
-      // TODO: Refresh tools list when implemented
     } catch (error) {
       const rawError = error instanceof Error ? error : new Error(String(error))
       console.error('[TOOLS_PAGE] Error creating tool (RAW ERROR)', {
@@ -173,23 +209,81 @@ export default function ToolsPage() {
           />
         </div>
 
-        {/* Tools List - Placeholder */}
+        {/* Tools List */}
         <Card className="border-gray-200 dark:border-gray-900">
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-900 mb-4">
-              <Wrench className="h-8 w-8 text-gray-400 dark:text-gray-500" />
-            </div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">No tools found</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400 text-center max-w-md mb-4">
-              Create your first tool to enable integrations with external APIs and services.
-            </p>
-            <Button
-              onClick={() => setCreateDialogOpen(true)}
-              className="bg-primary hover:bg-primary/90 text-white"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Create Tool
-            </Button>
+          <CardContent className="p-6">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+              </div>
+            ) : error ? (
+              <div className="text-center py-12 text-red-500">
+                <p>Failed to load tools. Please try again.</p>
+              </div>
+            ) : tools.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-900 mb-4">
+                  <Wrench className="h-8 w-8 text-gray-400 dark:text-gray-500" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">No tools found</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 text-center max-w-md mb-4">
+                  Create your first tool to enable integrations with external APIs and services.
+                </p>
+                <Button
+                  onClick={() => setCreateDialogOpen(true)}
+                  className="bg-primary hover:bg-primary/90 text-white"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Tool
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Filter tools by search query */}
+                {tools
+                  .filter((tool) => 
+                    searchQuery === '' || 
+                    tool.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    tool.description?.toLowerCase().includes(searchQuery.toLowerCase())
+                  )
+                  .map((tool) => (
+                    <div
+                      key={tool.id}
+                      className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-800 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3">
+                          <h3 className="font-semibold text-gray-900 dark:text-white">{tool.name}</h3>
+                          <Badge variant={tool.status === 'active' ? 'default' : 'secondary'}>
+                            {tool.status}
+                          </Badge>
+                        </div>
+                        {tool.description && (
+                          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                            {tool.description}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 dark:text-gray-500">
+                          <span>{tool.method}</span>
+                          <span className="truncate max-w-md">{tool.endpoint}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedTool(tool)
+                            setEditDialogOpen(true)
+                          }}
+                        >
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -352,10 +446,10 @@ export default function ToolsPage() {
               </Button>
               <Button
                 onClick={handleCreateTool}
-                disabled={isCreating || !isAuthReady}
+                disabled={isCreating || !isAuthReady || createMutation.isPending}
                 className="bg-primary hover:bg-primary/90 text-white"
               >
-                {isCreating ? (
+                {isCreating || createMutation.isPending ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     Creating...
@@ -367,6 +461,144 @@ export default function ToolsPage() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Edit Tool Dialog */}
+        {selectedTool && (
+          <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-white dark:bg-black border-gray-200 dark:border-gray-900">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-lg text-gray-900 dark:text-white">
+                  <Wrench className="h-5 w-5 text-gray-700 dark:text-gray-300" />
+                  Edit Tool
+                </DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-6 py-4">
+                {/* Tool Name */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-900 dark:text-white">
+                    Tool Name <span className="text-red-500">*</span>
+                  </label>
+                  <Input
+                    value={toolName}
+                    onChange={(e) => setToolName(e.target.value)}
+                    placeholder="My API Tool"
+                    className="w-full focus:ring-2 focus:ring-primary focus:border-primary"
+                  />
+                </div>
+
+                {/* Description */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-900 dark:text-white">
+                    Description <span className="text-red-500">*</span>
+                  </label>
+                  <Textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Describe when and how the agent should use this tool..."
+                    rows={4}
+                    className="w-full focus:ring-2 focus:ring-primary focus:border-primary resize-none"
+                  />
+                </div>
+
+                {/* HTTP Method and URL */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-900 dark:text-white">Method</label>
+                    <Select value={httpMethod} onValueChange={setHttpMethod}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="GET">GET</SelectItem>
+                        <SelectItem value="POST">POST</SelectItem>
+                        <SelectItem value="PUT">PUT</SelectItem>
+                        <SelectItem value="DELETE">DELETE</SelectItem>
+                        <SelectItem value="PATCH">PATCH</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 col-span-2">
+                    <label className="text-sm font-medium text-gray-900 dark:text-white">
+                      Base URL Pattern <span className="text-red-500">*</span>
+                    </label>
+                    <Input
+                      value={baseUrlPattern}
+                      onChange={(e) => setBaseUrlPattern(e.target.value)}
+                      placeholder="https://api.example.com/endpoint"
+                      className="w-full focus:ring-2 focus:ring-primary focus:border-primary"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer Actions */}
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-gray-200 dark:border-gray-900">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setEditDialogOpen(false)
+                    setSelectedTool(null)
+                  }}
+                  disabled={updateMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={async () => {
+                    if (!selectedTool) return
+                    
+                    const toolDefinition = {
+                      name: toolName,
+                      definition: {
+                        modelToolName: modelToolName || selectedTool.name.toLowerCase().replace(/\s+/g, '_'),
+                        description: description,
+                        dynamicParameters: dynamicParams.length > 0 ? dynamicParams : [],
+                        http: {
+                          baseUrlPattern: baseUrlPattern,
+                          httpMethod: httpMethod,
+                        },
+                      },
+                    }
+
+                    try {
+                      await updateMutation.mutateAsync({
+                        id: selectedTool.id,
+                        data: toolDefinition,
+                      })
+
+                      toast({
+                        title: 'Tool updated',
+                        description: `"${toolName}" has been updated successfully.`,
+                      })
+
+                      setEditDialogOpen(false)
+                      setSelectedTool(null)
+                    } catch (error) {
+                      const errorMessage = error instanceof Error ? error.message : 'Failed to update tool'
+                      toast({
+                        title: 'Error',
+                        description: errorMessage,
+                        variant: 'destructive',
+                      })
+                    }
+                  }}
+                  disabled={updateMutation.isPending || !toolName.trim() || !baseUrlPattern.trim()}
+                  className="bg-primary hover:bg-primary/90 text-white"
+                >
+                  {updateMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Updating...
+                    </>
+                  ) : (
+                    'Save Changes'
+                  )}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
     </AppLayout>
   )

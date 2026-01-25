@@ -1,0 +1,102 @@
+[
+  {
+    "table_name": "admin_otps",
+    "column_names": "id, email, otp_code, expires_at, used, created_at"
+  },
+  {
+    "table_name": "agents",
+    "column_names": "id, client_id, ultravox_agent_id, name, description, voice_id, system_prompt, model, tools, knowledge_bases, status, created_at, updated_at, configuration, success_criteria, webhook_url"
+  },
+  {
+    "table_name": "api_keys",
+    "column_names": "id, client_id, service, key_name, encrypted_key, settings, is_active, created_at, updated_at, provider_project_id"
+  },
+  {
+    "table_name": "application_logs",
+    "column_names": "id, source, level, category, message, request_id, client_id, user_id, endpoint, method, status_code, duration_ms, context, error_details, ip_address, user_agent, created_at"
+  },
+  {
+    "table_name": "audit_log",
+    "column_names": "id, action, table_name, record_id, user_id, client_id, diff, ip_address, user_agent, created_at, metadata"
+  },
+  {
+    "table_name": "calls",
+    "column_names": "id, client_id, agent_id, ultravox_call_id, phone_number, direction, status, context, call_settings, started_at, ended_at, duration_seconds, cost_usd, recording_url, transcript, created_at, updated_at, analysis, provider_latency_ms, is_test, summary, sentiment, is_success, structured_data"
+  },
+  {
+    "table_name": "campaign_contacts",
+    "column_names": "id, campaign_id, phone_number, first_name, last_name, email, custom_fields, status, call_id, created_at, updated_at"
+  },
+  {
+    "table_name": "campaigns",
+    "column_names": "id, client_id, agent_id, name, schedule_type, scheduled_at, timezone, max_concurrent_calls, status, ultravox_batch_ids, stats, created_at, updated_at, last_reconciled_at, error_details"
+  },
+  {
+    "table_name": "clients",
+    "column_names": "id, name, email, subscription_status, credits_balance, credits_ceiling, stripe_customer_id, created_at, updated_at, clerk_organization_id, subscription_tier_id, minutes_balance, next_renewal_at"
+  },
+  {
+    "table_name": "contact_folders",
+    "column_names": "id, client_id, name, description, created_at, updated_at"
+  },
+  {
+    "table_name": "contacts",
+    "column_names": "id, client_id, folder_id, first_name, last_name, email, phone_number, metadata, created_at, updated_at"
+  },
+  {
+    "table_name": "credit_transactions",
+    "column_names": "id, client_id, type, amount, reference_type, reference_id, description, created_at"
+  },
+  {
+    "table_name": "data polling test",
+    "column_names": "id, created_at"
+  },
+  {
+    "table_name": "idempotency_keys",
+    "column_names": "id, client_id, key, request_hash, response_body, status_code, created_at, ttl_at"
+  },
+  {
+    "table_name": "knowledge_base_chunks",
+    "column_names": "id, kb_id, content, embedding, created_at"
+  },
+  {
+    "table_name": "knowledge_base_documents",
+    "column_names": "id, client_id, knowledge_base_id, s3_key, file_type, file_size, status, ultravox_source_id, error_message, created_at, updated_at"
+  },
+  {
+    "table_name": "knowledge_documents",
+    "column_names": "id, client_id, name, description, language, ultravox_corpus_id, status, settings, created_at, updated_at"
+  },
+  {
+    "table_name": "subscription_tiers",
+    "column_names": "id, name, price_usd, minutes_allowance, credits_allowance, stripe_price_id, is_active, created_at"
+  },
+  {
+    "table_name": "tool_logs",
+    "column_names": "id, tool_id, call_id, request_body, response_body, status_code, execution_time_ms, created_at"
+  },
+  {
+    "table_name": "tools",
+    "column_names": "id, client_id, ultravox_tool_id, name, description, category, endpoint, method, authentication, parameters, response_schema, status, created_at, updated_at, is_verified, last_test_error"
+  },
+  {
+    "table_name": "users",
+    "column_names": "id, auth0_sub, client_id, email, role, created_at, updated_at, clerk_user_id"
+  },
+  {
+    "table_name": "voices",
+    "column_names": "id, client_id, name, provider, provider_voice_id, type, language, status, training_info, ultravox_voice_id, created_at, updated_at, is_system, metadata, provider_metadata, user_id"
+  },
+  {
+    "table_name": "webhook_deliveries",
+    "column_names": "id, webhook_endpoint_id, event_type, payload, status, attempt, response_code, response_body, error_message, delivered_at, created_at"
+  },
+  {
+    "table_name": "webhook_endpoints",
+    "column_names": "id, client_id, url, event_types, secret, enabled, retry_config, created_at, updated_at"
+  },
+  {
+    "table_name": "webhook_logs",
+    "column_names": "id, event_type, payload, processed_at, status, error_message"
+  }
+]

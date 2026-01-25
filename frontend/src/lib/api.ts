@@ -503,12 +503,34 @@ class ApiClient {
     const clientId = authManager.getClientId()
     const url = `${this.baseUrl}${endpoint}`
     
+    console.log('[API_UPLOAD] ===== UPLOAD REQUEST START =====')
     console.log('[API_UPLOAD] Starting upload request', {
       endpoint,
       url,
+      baseUrl: this.baseUrl,
       hasToken: !!token,
       hasClientId: !!clientId,
       formDataKeys: Array.from(formData.keys()),
+    })
+    
+    // Log FormData contents for debugging
+    const formDataEntries: any[] = []
+    for (const [key, value] of formData.entries()) {
+      if (value instanceof File) {
+        formDataEntries.push({
+          key,
+          type: 'File',
+          name: value.name,
+          size: value.size,
+          mimeType: value.type
+        })
+      } else {
+        formDataEntries.push({ key, type: 'string', value: String(value) })
+      }
+    }
+    console.log('[API_UPLOAD] FormData contents', {
+      entries: formDataEntries,
+      totalEntries: formDataEntries.length
     })
     
     const headers: Record<string, string> = {}
@@ -519,14 +541,31 @@ class ApiClient {
 
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
+      console.log('[API_UPLOAD] Authorization header added', { tokenLength: token.length })
+    } else {
+      console.warn('[API_UPLOAD] ⚠️ No token available!')
     }
 
     if (clientId) {
       headers['x-client-id'] = clientId
+      console.log('[API_UPLOAD] x-client-id header added', { clientId })
     }
+
+    // CRITICAL: Do NOT set Content-Type header - browser must set it with boundary
+    console.log('[API_UPLOAD] Headers prepared (Content-Type will be set by browser)', {
+      headers: Object.keys(headers),
+      note: 'Content-Type not set - browser will add multipart boundary automatically'
+    })
 
     let response: Response
     try {
+      console.log('[API_UPLOAD] Sending fetch request...', {
+        url,
+        method: 'POST',
+        hasBody: !!formData,
+        headersCount: Object.keys(headers).length
+      })
+      
       // No timeout needed - backend returns immediately and processes in background
       response = await fetch(url, {
         method: 'POST',
@@ -534,6 +573,9 @@ class ApiClient {
         body: formData,
       })
       
+      console.log('[API_UPLOAD] Fetch request sent, waiting for response...')
+      
+      console.log('[API_UPLOAD] ===== RESPONSE RECEIVED =====')
       console.log('[API_UPLOAD] Fetch completed', {
         endpoint,
         url,
@@ -541,6 +583,14 @@ class ApiClient {
         statusText: response.statusText,
         ok: response.ok,
         headers: Object.fromEntries(response.headers.entries()),
+      })
+      
+      // Log response details
+      const responseHeaders = Object.fromEntries(response.headers.entries())
+      console.log('[API_UPLOAD] Response headers', {
+        contentType: responseHeaders['content-type'],
+        contentLength: responseHeaders['content-length'],
+        allHeaders: responseHeaders
       })
     } catch (networkError) {
       const rawError = networkError instanceof Error ? networkError : new Error(String(networkError))
@@ -559,12 +609,15 @@ class ApiClient {
 
     let responseData: BackendResponse<T> | BackendError
     try {
+      console.log('[API_UPLOAD] Reading response body...')
       const responseText = await response.text()
+      console.log('[API_UPLOAD] ===== RESPONSE BODY RECEIVED =====')
       console.log('[API_UPLOAD] Response text (RAW)', {
         endpoint,
         status: response.status,
         responseText,
         responseTextLength: responseText.length,
+        preview: responseText.substring(0, 500)
       })
       
       responseData = responseText ? JSON.parse(responseText) : ({} as BackendResponse<T> | BackendError)
@@ -582,6 +635,7 @@ class ApiClient {
     }
 
     const durationMs = Math.round(performance.now() - startTime)
+    console.log('[API_UPLOAD] ===== RESPONSE PARSED =====')
     console.log('[API_UPLOAD] Response data (RAW)', {
       endpoint,
       status: response.status,
@@ -589,6 +643,7 @@ class ApiClient {
       responseData,
       hasError: 'error' in responseData,
       hasData: 'data' in responseData,
+      fullResponseData: JSON.stringify(responseData, null, 2)
     })
 
     if (!response.ok) {
@@ -691,11 +746,14 @@ class ApiClient {
       throw genericError
     }
 
+    console.log('[API_UPLOAD] ===== UPLOAD SUCCESS =====')
     console.log('[API_UPLOAD] Upload successful', {
       endpoint,
       durationMs,
       responseData,
+      fullResponse: JSON.stringify(responseData, null, 2)
     })
+    console.log('[API_UPLOAD] ===== END UPLOAD REQUEST =====')
 
     return responseData as BackendResponse<T>
   }
@@ -726,29 +784,6 @@ export const endpoints = {
     presign: '/voices/files/presign',
     sync: (id: string) => `/voices/${id}/sync`,
     preview: (id: string, text?: string) => `/voices/${id}/preview${text ? `?text=${encodeURIComponent(text)}` : ''}`,
-  },
-  
-  // Agents
-  agents: {
-    list: '/agents',
-    get: (id: string) => `/agents/${id}`,
-    create: '/agents',
-    update: (id: string) => `/agents/${id}`,
-    delete: (id: string) => `/agents/${id}`,
-    sync: (id: string) => `/agents/${id}/sync`,
-    bulkDelete: '/agents/bulk',
-  },
-  
-  // Knowledge Bases
-  knowledge: {
-    list: '/kb',
-    get: (id: string) => `/kb/${id}`,
-    create: '/kb',
-    update: (id: string) => `/kb/${id}`,
-    delete: (id: string) => `/kb/${id}`,
-    addContent: (id: string) => `/kb/${id}/add-content`,
-    presign: (id: string) => `/kb/${id}/files/presign`,
-    ingest: (id: string) => `/kb/${id}/files/ingest`,
   },
   
   // Campaigns
@@ -786,18 +821,26 @@ export const endpoints = {
     delete: (id: string) => `/tools/${id}`,
   },
   
-  // Contacts
+  // Knowledge Bases
+  knowledge: {
+    list: '/kb',
+    get: (id: string) => `/kb/${id}`,
+    create: '/kb',
+    update: (id: string) => `/kb/${id}`,
+    delete: (id: string) => `/kb/${id}`,
+    fetch: (id: string) => `/kb/${id}/fetch`, // For Ultravox tool
+  },
+  
+  // Contacts - Simple, explicit endpoints
   contacts: {
-    list: '/contacts',
-    get: (id: string) => `/contacts/${id}`,
-    create: '/contacts',
-    update: (id: string) => `/contacts/${id}`,
-    delete: (id: string) => `/contacts/${id}`,
-    folders: {
-      list: '/contacts/folders',
-      create: '/contacts/folders',
-      delete: (id: string) => `/contacts/folders/${id}`,
-    },
+    createFolder: '/contacts/create-folder',
+    listFolders: '/contacts/list-folders',
+    listContacts: (folderId?: string) => `/contacts/list-contacts${folderId ? `?folder_id=${folderId}` : ''}`,
+    addContact: '/contacts/add-contact',
+    updateContact: (id: string) => `/contacts/update-contact/${id}`,
+    deleteContact: (id: string) => `/contacts/delete-contact/${id}`,
+    import: '/contacts/import-contacts',
+    export: (folderId?: string) => `/contacts/export-contacts${folderId ? `?folder_id=${folderId}` : ''}`,
   },
   
   // Telephony
@@ -823,6 +866,24 @@ export const endpoints = {
   export: {
     calls: '/export/calls',
     campaigns: '/export/campaigns',
-    agents: '/export/agents',
+  },
+  
+  // Agents
+  agents: {
+    list: '/agents',
+    get: (id: string) => `/agents/${id}`,
+    create: '/agents',
+    createDraft: '/agents/draft',
+    update: (id: string) => `/agents/${id}`,
+    delete: (id: string) => `/agents/${id}`,
+    testCall: (id: string) => `/agents/${id}/test-call`,
+    sync: (id: string) => `/agents/${id}/sync`,
+    aiAssist: '/agents/ai-assist',
+  },
+  
+  // Agent Templates
+  agentTemplates: {
+    list: '/agent-templates',
+    get: (id: string) => `/agent-templates/${id}`,
   },
 }

@@ -9,7 +9,6 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ArrowLeft, Upload, Table2, File, X } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useAgents } from '@/hooks/use-agents'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient, endpoints } from '@/lib/api'
 import { useClientId } from '@/lib/clerk-auth-client'
@@ -24,14 +23,10 @@ export default function NewCampaignPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [batchName, setBatchName] = useState('Untitled Batch')
   const [phoneNumber, setPhoneNumber] = useState('')
-  const [selectedAgent, setSelectedAgent] = useState('')
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [parsedData, setParsedData] = useState<{ columns: string[]; rows: Record<string, any>[] } | null>(null)
   const [isParsing, setIsParsing] = useState(false)
-  
-  // Fetch agents from database
-  const { data: agents = [], isLoading: agentsLoading } = useAgents()
   
   // Fetch phone numbers from database
   const { data: phoneNumbersData, isLoading: phoneNumbersLoading } = useQuery({
@@ -313,25 +308,6 @@ export default function NewCampaignPage() {
               </Select>
             </div>
 
-            {/* Select Agent */}
-            <div className="space-y-2 ml-[10px]">
-              <Label className="text-sm font-medium text-gray-900 dark:text-white">Select Agent</Label>
-              <Select value={selectedAgent} onValueChange={setSelectedAgent} disabled={agentsLoading || agents.length === 0}>
-                <SelectTrigger>
-                  <SelectValue placeholder={agentsLoading ? "Loading..." : agents.length === 0 ? "No agents available" : "Select an agent"} />
-                </SelectTrigger>
-                {agents.length > 0 && (
-                  <SelectContent>
-                    {agents.filter(agent => agent.status === 'active').map((agent) => (
-                      <SelectItem key={agent.id} value={agent.id}>
-                        {agent.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                )}
-              </Select>
-            </div>
-
             {/* Recipients */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -420,17 +396,8 @@ export default function NewCampaignPage() {
                 <h4 className="text-sm font-medium text-gray-900 dark:text-white">Formatting</h4>
                 <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
                   <p>
-                    {!selectedAgent ? (
-                      <>
-                        The <span className="font-mono text-gray-900 dark:text-white">full_name</span> and <span className="font-mono text-gray-900 dark:text-white">phone_number</span> columns are required. You can also pass certain{' '}
-                        <span className="font-medium text-gray-900 dark:text-white">overrides</span>. Any other columns will be passed as dynamic variables.
-                      </>
-                    ) : (
-                      <>
-                        The <span className="font-mono text-gray-900 dark:text-white">phone_number</span> column is required. You can also pass certain{' '}
-                        <span className="font-medium text-gray-900 dark:text-white">overrides</span>. Any other columns will be passed as dynamic variables.
-                      </>
-                    )}
+                    The <span className="font-mono text-gray-900 dark:text-white">full_name</span> and <span className="font-mono text-gray-900 dark:text-white">phone_number</span> columns are required. You can also pass certain{' '}
+                    <span className="font-medium text-gray-900 dark:text-white">overrides</span>. Any other columns will be passed as dynamic variables.
                   </p>
                   <div className="mt-3 flex gap-4 text-xs">
                     <div>

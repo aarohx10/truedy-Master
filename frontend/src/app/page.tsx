@@ -163,9 +163,9 @@ export default function LandingPage() {
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-green-500/10 dark:bg-green-500/20">
                 <Mic className="h-6 w-6 text-green-600 dark:text-green-400" />
               </div>
-              <CardTitle className="text-gray-900 dark:text-gray-100">Voice Cloning</CardTitle>
+              <CardTitle className="text-gray-900 dark:text-gray-100">Voice Import</CardTitle>
               <CardDescription className="text-gray-600 dark:text-gray-400">
-                Clone any voice with just a few audio samples. Create authentic, brand-consistent voices
+                Import voices from ElevenLabs, Cartesia, or LMNT. Use authentic, brand-consistent voices
               </CardDescription>
             </CardHeader>
           </Card>

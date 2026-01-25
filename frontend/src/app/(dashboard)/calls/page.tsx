@@ -12,7 +12,6 @@ import { useState, useEffect } from 'react'
 import { CALL_STATUSES } from '@/constants'
 import { formatDate, formatDuration, formatPhoneNumber } from '@/lib/utils'
 import { useCalls, useCreateCall, Call } from '@/hooks/use-calls'
-import { useAgents } from '@/hooks/use-agents'
 import { useToast } from '@/hooks/use-toast'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuthClient } from '@/lib/clerk-auth-client'
@@ -34,7 +33,6 @@ export default function CallsPage() {
   })
   
   const calls = callsData?.data || []
-  const { data: agents = [] } = useAgents()
   const createCallMutation = useCreateCall()
 
   // Real-time polling for active calls
@@ -52,16 +50,9 @@ export default function CallsPage() {
     }
   }, [calls, queryClient, clientId])
 
-  // Get agent name for display
-  const getAgentName = (agentId: string) => {
-    const agent = agents.find(a => a.id === agentId)
-    return agent?.name || 'Unknown Agent'
-  }
-
   const filteredCalls = calls.filter(call => {
     const matchesSearch = 
-      call.phone_number.includes(searchQuery) ||
-      getAgentName(call.agent_id).toLowerCase().includes(searchQuery.toLowerCase())
+      call.phone_number.includes(searchQuery)
     return matchesSearch
   })
 
@@ -95,7 +86,7 @@ export default function CallsPage() {
     setSelectedCall(null)
   }
 
-  const handleCreateCall = async (data: { agent_id: string; phone_number: string; direction: 'inbound' | 'outbound' }) => {
+  const handleCreateCall = async (data: { phone_number: string; direction: 'inbound' | 'outbound' }) => {
     try {
       // Validate phone number format (E.164: +1234567890)
       if (!data.phone_number.match(/^\+[1-9]\d{1,14}$/)) {
@@ -107,28 +98,9 @@ export default function CallsPage() {
         return
       }
 
-      // Check if agent exists
-      const selectedAgent = agents.find(a => a.id === data.agent_id)
-      if (!selectedAgent) {
-        toast({
-          title: 'Agent not found',
-          description: 'The selected agent could not be found.',
-          variant: 'destructive',
-        })
-        return
-      }
-
-      // Warn if agent doesn't have ultravox_agent_id, but allow creation
-      if (!selectedAgent.ultravox_agent_id) {
-        toast({
-          title: 'Warning',
-          description: 'This agent is not yet configured with Ultravox. The call will be created but may not be processed.',
-          variant: 'default',
-        })
-      }
-
       const result = await createCallMutation.mutateAsync({
-        ...data,
+        phone_number: data.phone_number,
+        direction: data.direction,
         call_settings: {},
         context: {},
       })
@@ -142,7 +114,6 @@ export default function CallsPage() {
       const rawError = error instanceof Error ? error : new Error(String(error))
       console.error('[CALLS_PAGE] Error creating call (RAW ERROR)', {
         data,
-        selectedAgent,
         error: rawError,
         errorMessage: rawError.message,
         errorStack: rawError.stack,
@@ -155,8 +126,6 @@ export default function CallsPage() {
       // Provide helpful error messages
       if (errorMessage.includes('Invalid or expired token')) {
         errorMessage = 'Your session has expired. Please refresh the page or log out and log back in.'
-      } else if (errorMessage.includes('ultravox_agent_id')) {
-        errorMessage = 'This agent is not configured with Ultravox. Please sync the agent with Ultravox first from the Agents page.'
       }
       
       toast({
@@ -231,7 +200,6 @@ export default function CallsPage() {
                     <thead className="border-b border-gray-200 dark:border-gray-900 bg-gray-50 dark:bg-gray-900">
                       <tr>
                         <th className="px-4 lg:px-6 py-3 text-left text-xs lg:text-sm font-medium text-gray-900 dark:text-white">Phone</th>
-                        <th className="px-4 lg:px-6 py-3 text-left text-xs lg:text-sm font-medium text-gray-900 dark:text-white">Agent</th>
                         <th className="px-4 lg:px-6 py-3 text-left text-xs lg:text-sm font-medium text-gray-900 dark:text-white">Direction</th>
                         <th className="px-4 lg:px-6 py-3 text-left text-xs lg:text-sm font-medium text-gray-900 dark:text-white">Status</th>
                         <th className="px-4 lg:px-6 py-3 text-left text-xs lg:text-sm font-medium text-gray-900 dark:text-white">Duration</th>
@@ -251,7 +219,7 @@ export default function CallsPage() {
                             {formatPhoneNumber(call.phone_number)}
                           </td>
                           <td className="px-4 lg:px-6 py-4 text-xs lg:text-sm text-gray-900 dark:text-white">
-                            {getAgentName(call.agent_id)}
+                            -
                           </td>
                           <td className="px-4 lg:px-6 py-4">
                             <Badge variant="outline" className="capitalize">
@@ -318,7 +286,6 @@ export default function CallsPage() {
                       <div className="flex items-start justify-between">
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{formatPhoneNumber(call.phone_number)}</p>
-                          <p className="text-xs text-gray-600 dark:text-gray-400">{getAgentName(call.agent_id)}</p>
                         </div>
                         {getStatusBadge(call.status)}
                       </div>
@@ -408,7 +375,6 @@ export default function CallsPage() {
           isOpen={isCreateModalOpen}
           onClose={() => setIsCreateModalOpen(false)}
           onCreateCall={handleCreateCall}
-          agents={agents.filter(a => a.status === 'active')}
           isLoading={createCallMutation.isPending}
         />
       </div>

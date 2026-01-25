@@ -6,7 +6,7 @@ import { useClientId, useAuthReady } from '@/lib/clerk-auth-client'
 export interface Call {
   id: string
   client_id: string
-  agent_id: string
+  agent_id?: string
   phone_number: string
   direction: 'inbound' | 'outbound'
   status: 'queued' | 'ringing' | 'in_progress' | 'completed' | 'failed' | 'voicemail' | 'no_answer'
@@ -32,7 +32,6 @@ export interface CreateCallData {
 }
 
 export function useCalls(params?: {
-  agent_id?: string
   status?: string
   direction?: string
   limit?: number
@@ -53,7 +52,6 @@ export function useCalls(params?: {
       }
       
       const queryParams = new URLSearchParams()
-      if (params?.agent_id) queryParams.append('agent_id', params.agent_id)
       if (params?.status) queryParams.append('status', params.status)
       if (params?.direction) queryParams.append('direction', params.direction)
       if (params?.limit) queryParams.append('limit', params.limit.toString())

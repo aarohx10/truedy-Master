@@ -6,222 +6,212 @@ import { AppLayout } from '@/components/layout/app-layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
+import { ArrowLeft, Plus, Search, Loader2, Upload, Download, Edit, Trash2 } from 'lucide-react'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { ArrowLeft, Upload, Download, Plus, Search, MoreVertical, Edit, Trash2, Loader2, Folder } from 'lucide-react'
-import { apiClient, endpoints } from '@/lib/api'
+  useContacts,
+  useContactFolders,
+  useCreateContact,
+  useUpdateContact,
+  useDeleteContact,
+  useExportContacts,
+} from '@/hooks/use-contacts'
 import { useToast } from '@/hooks/use-toast'
-import { useAuthReady, useClientId } from '@/lib/clerk-auth-client'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { formatPhoneNumber } from '@/lib/utils'
+import { Contact, CreateContactData, UpdateContactData } from '@/types'
+import { ContactsTable } from '@/components/contacts/contacts-table'
+import { ContactFormDialog } from '@/components/contacts/contact-form-dialog'
+import { ImportDialog } from '@/components/contacts/import-dialog'
+import { FolderFormDialog } from '@/components/contacts/folder-form-dialog'
 
-interface Contact {
-  id: string
-  phone_number: string
-  first_name?: string
-  last_name?: string
-  email?: string
-  custom_fields?: Record<string, any>
-  created_at: string
-}
-
-interface ContactFolder {
-  id: string
-  name: string
-  description?: string
-}
-
-export default function FolderContactsPage() {
+export default function FolderDetailPage() {
   const router = useRouter()
   const params = useParams()
   const folderId = params.folderId as string
-  const { toast } = useToast()
-  const isAuthReady = useAuthReady()
-  const clientId = useClientId()
-  const queryClient = useQueryClient()
-  
-  const [searchQuery, setSearchQuery] = useState('')
-  const [importDialogOpen, setImportDialogOpen] = useState(false)
-  const [addContactDialogOpen, setAddContactDialogOpen] = useState(false)
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  
-  // Contact form state
-  const [phoneNumber, setPhoneNumber] = useState('')
-  const [firstName, setFirstName] = useState('')
-  const [lastName, setLastName] = useState('')
-  const [email, setEmail] = useState('')
 
-  // Fetch folder details
-  const { data: folders = [] } = useQuery({
-    queryKey: ['contact-folders', clientId],
-    queryFn: async () => {
-      const response = await apiClient.get<ContactFolder[]>(endpoints.contacts.folders.list)
-      return response.data
-    },
-    enabled: isAuthReady && !!clientId,
-  })
-  
+  // Get folder from folders list (simplified - no separate get endpoint)
+  const { data: folders = [], isLoading: foldersLoading } = useContactFolders()
   const folder = folders.find(f => f.id === folderId)
+  const folderLoading = foldersLoading
+  
+  const { data: contacts = [], isLoading: contactsLoading } = useContacts(folderId)
+  const { toast } = useToast()
 
-  // Fetch contacts for this folder
-  const { data: contacts = [], isLoading } = useQuery({
-    queryKey: ['contacts', clientId, folderId],
-    queryFn: async () => {
-      const response = await apiClient.get<Contact[]>(`${endpoints.contacts.list}?folder_id=${folderId}`)
-      return response.data
-    },
-    enabled: isAuthReady && !!clientId && !!folderId,
-  })
+  const createMutation = useCreateContact()
+  const updateMutation = useUpdateContact()
+  const deleteMutation = useDeleteContact()
+  const exportMutation = useExportContacts()
 
-  // Create contact mutation
-  const createContactMutation = useMutation({
-    mutationFn: async (data: { phone_number: string; first_name?: string; last_name?: string; email?: string; folder_id: string }) => {
-      const response = await apiClient.post<Contact>(endpoints.contacts.create, data)
-      return response.data
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['contacts', clientId, folderId] })
-      queryClient.invalidateQueries({ queryKey: ['contact-folders', clientId] })
-      setPhoneNumber('')
-      setFirstName('')
-      setLastName('')
-      setEmail('')
-      setAddContactDialogOpen(false)
-      toast({
-        title: 'Contact added',
-        description: 'Contact has been added successfully.',
-      })
-    },
-    onError: (error: Error) => {
-      const rawError = error instanceof Error ? error : new Error(String(error))
-      console.error('[CONTACTS_FOLDER_PAGE] Error adding contact (RAW ERROR)', {
-        folderId,
-        error: rawError,
-        errorMessage: rawError.message,
-        errorStack: rawError.stack,
-        errorName: rawError.name,
-        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
-      })
-      
-      toast({
-        title: 'Error adding contact',
-        description: rawError.message,
-        variant: 'destructive',
-        duration: 10000,
-      })
-    },
-  })
+  const [searchQuery, setSearchQuery] = useState('')
+  const [contactDialogOpen, setContactDialogOpen] = useState(false)
+  const [editingContact, setEditingContact] = useState<Contact | null>(null)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false)
+  const [deleteContactDialogOpen, setDeleteContactDialogOpen] = useState(false)
+  const [contactToDelete, setContactToDelete] = useState<Contact | null>(null)
 
-  // Delete contact mutation
-  const deleteContactMutation = useMutation({
-    mutationFn: async (contactId: string) => {
-      await apiClient.delete(endpoints.contacts.delete(contactId))
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['contacts', clientId, folderId] })
-      queryClient.invalidateQueries({ queryKey: ['contact-folders', clientId] })
+  const handleCreateContact = () => {
+    setEditingContact(null)
+    setContactDialogOpen(true)
+  }
+
+  const handleEditContact = (contact: Contact) => {
+    setEditingContact(contact)
+    setContactDialogOpen(true)
+  }
+
+  const handleDeleteContact = (contact: Contact) => {
+    setContactToDelete(contact)
+    setDeleteContactDialogOpen(true)
+  }
+
+  const handleConfirmDeleteContact = async () => {
+    if (!contactToDelete) return
+
+    try {
+      await deleteMutation.mutateAsync({ id: contactToDelete.id, folderId })
       toast({
         title: 'Contact deleted',
-        description: 'Contact has been deleted successfully.',
+        description: 'Contact has been deleted.',
       })
-    },
-    onError: (error: Error) => {
-      const rawError = error instanceof Error ? error : new Error(String(error))
-      console.error('[CONTACTS_FOLDER_PAGE] Error deleting contact (RAW ERROR)', {
-        folderId,
-        error: rawError,
-        errorMessage: rawError.message,
-        errorStack: rawError.stack,
-        errorName: rawError.name,
-        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
+      setDeleteContactDialogOpen(false)
+      setContactToDelete(null)
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to delete contact'
+      toast({
+        title: 'Error',
+        description: errorMessage,
+        variant: 'destructive',
       })
+    }
+  }
+
+  const handleBulkDelete = async (contactIds: string[]) => {
+    try {
+      // Delete contacts one by one (simplified - no bulk delete endpoint)
+      await Promise.all(
+        contactIds.map(id => deleteMutation.mutateAsync({ id, folderId }))
+      )
+      toast({
+        title: 'Contacts deleted',
+        description: `${contactIds.length} contact${contactIds.length !== 1 ? 's' : ''} deleted.`,
+      })
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to delete contacts'
+      toast({
+        title: 'Error',
+        description: errorMessage,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleContactSubmit = async (data: CreateContactData | UpdateContactData) => {
+    try {
+      if (editingContact) {
+        await updateMutation.mutateAsync({ id: editingContact.id, data: data as UpdateContactData })
+        toast({
+          title: 'Contact updated',
+          description: 'Contact has been updated.',
+        })
+      } else {
+        await createMutation.mutateAsync(data as CreateContactData)
+        toast({
+          title: 'Contact created',
+          description: 'Contact has been added.',
+        })
+      }
+      setContactDialogOpen(false)
+      setEditingContact(null)
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to save contact'
+      toast({
+        title: 'Error',
+        description: errorMessage,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleImportComplete = (result: { successful: number; failed: number }) => {
+    toast({
+      title: 'Import completed',
+      description: `${result.successful} contact${result.successful !== 1 ? 's' : ''} imported${result.failed > 0 ? `, ${result.failed} failed` : ''}.`,
+    })
+  }
+
+  const handleExport = async () => {
+    try {
+      const blob = await exportMutation.mutateAsync(folderId)
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${folder?.name || 'contacts'}_${new Date().toISOString().split('T')[0]}.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
       
       toast({
-        title: 'Error deleting contact',
-        description: rawError.message,
-        variant: 'destructive',
-        duration: 10000,
+        title: 'Export started',
+        description: 'Contacts are being exported.',
       })
-    },
-  })
-
-  const handleAddContact = async () => {
-    if (!phoneNumber.trim()) {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to export contacts'
       toast({
-        title: 'Validation error',
-        description: 'Phone number is required',
+        title: 'Error',
+        description: errorMessage,
         variant: 'destructive',
       })
-      return
     }
-
-    createContactMutation.mutate({
-      phone_number: phoneNumber.trim(),
-      first_name: firstName.trim() || undefined,
-      last_name: lastName.trim() || undefined,
-      email: email.trim() || undefined,
-      folder_id: folderId,
-    })
   }
 
-  const handleImport = async () => {
-    if (!selectedFile) {
-      toast({
-        title: 'Validation error',
-        description: 'Please select a file to import',
-        variant: 'destructive',
-      })
-      return
+  const handleEditFolder = () => {
+    if (folder) {
+      setFolderDialogOpen(true)
     }
-
-    // TODO: Implement CSV/XLSX import
-    toast({
-      title: 'Import coming soon',
-      description: 'CSV/XLSX import will be implemented soon.',
-    })
   }
 
-  const handleExport = () => {
-    // TODO: Implement CSV export
+  // Folder editing removed - simplified structure doesn't support folder updates
+  const handleFolderSubmit = async (data: any) => {
+    // Folder editing not supported in simplified structure
     toast({
-      title: 'Export coming soon',
-      description: 'CSV export will be implemented soon.',
+      title: 'Not supported',
+      description: 'Folder editing is not available in the simplified structure.',
+      variant: 'destructive',
     })
+    setFolderDialogOpen(false)
   }
 
-  const filteredContacts = contacts.filter(contact => {
+  const filteredContacts = contacts.filter((contact) => {
+    if (!searchQuery) return true
     const query = searchQuery.toLowerCase()
     const fullName = `${contact.first_name || ''} ${contact.last_name || ''}`.toLowerCase()
     return (
       fullName.includes(query) ||
-      contact.email?.toLowerCase().includes(query) ||
-      contact.phone_number.includes(query)
+      (contact.email || '').toLowerCase().includes(query) ||
+      (contact.phone_number || '').includes(query)
     )
   })
 
-  if (!folder) {
+  if (folderLoading) {
     return (
       <AppLayout>
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+        </div>
+      </AppLayout>
+    )
+  }
+
+  if (!folder) {
+    return (
+      <AppLayout>
+        <div className="text-center py-12">
+          <p className="text-gray-500 dark:text-gray-400">Folder not found</p>
+          <Button onClick={() => router.push('/contacts')} className="mt-4">
+            Back to Contacts
+          </Button>
         </div>
       </AppLayout>
     )
@@ -235,6 +225,7 @@ export default function FolderContactsPage() {
           <div className="flex items-center gap-4">
             <Button
               variant="ghost"
+              size="sm"
               onClick={() => router.push('/contacts')}
               className="gap-2"
             >
@@ -242,16 +233,25 @@ export default function FolderContactsPage() {
               Back
             </Button>
             <div>
-              <div className="flex items-center gap-2">
-                <Folder className="h-5 w-5 text-primary" />
-                <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{folder.name}</h1>
-              </div>
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+                {folder.name}
+              </h1>
               {folder.description && (
-                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{folder.description}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                  {folder.description}
+                </p>
               )}
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={handleEditFolder}
+              className="gap-2"
+            >
+              <Edit className="h-4 w-4" />
+              Edit Folder
+            </Button>
             <Button
               variant="outline"
               onClick={() => setImportDialogOpen(true)}
@@ -264,12 +264,13 @@ export default function FolderContactsPage() {
               variant="outline"
               onClick={handleExport}
               className="gap-2"
+              disabled={exportMutation.isPending}
             >
               <Download className="h-4 w-4" />
               Export
             </Button>
             <Button
-              onClick={() => setAddContactDialogOpen(true)}
+              onClick={handleCreateContact}
               className="bg-primary hover:bg-primary/90 text-white gap-2"
             >
               <Plus className="h-4 w-4" />
@@ -278,8 +279,22 @@ export default function FolderContactsPage() {
           </div>
         </div>
 
+        {/* Stats */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center gap-6">
+              <div>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Total Contacts</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                  {folder.contact_count || 0}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Search */}
-        <div className="relative max-w-md">
+        <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
           <Input
             placeholder="Search contacts..."
@@ -290,232 +305,79 @@ export default function FolderContactsPage() {
         </div>
 
         {/* Contacts Table */}
-        {isLoading ? (
+        {contactsLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
           </div>
-        ) : filteredContacts.length === 0 ? (
-          <Card className="border-gray-200 dark:border-gray-900">
-            <CardContent className="flex flex-col items-center justify-center py-16">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-900 mb-4">
-                <Folder className="h-8 w-8 text-gray-400 dark:text-gray-500" />
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">No contacts in this folder</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 text-center max-w-md mb-4">
-                {searchQuery
-                  ? 'No contacts match your search'
-                  : 'Import your first contacts to this folder to get started'}
-              </p>
-              {!searchQuery && (
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => setImportDialogOpen(true)}
-                    className="gap-2"
-                  >
-                    <Upload className="h-4 w-4" />
-                    Import Contacts
-                  </Button>
-                  <Button
-                    onClick={() => setAddContactDialogOpen(true)}
-                    className="bg-primary hover:bg-primary/90 text-white gap-2"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Add Contact
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
         ) : (
-          <Card className="border-gray-200 dark:border-gray-900">
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-gray-50 dark:bg-gray-900">
-                      <TableHead className="text-gray-900 dark:text-white">Name</TableHead>
-                      <TableHead className="text-gray-900 dark:text-white">Email</TableHead>
-                      <TableHead className="text-gray-900 dark:text-white">Phone</TableHead>
-                      <TableHead className="text-gray-900 dark:text-white">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredContacts.map((contact) => (
-                      <TableRow key={contact.id} className="hover:bg-primary/5">
-                        <TableCell className="font-medium text-gray-900 dark:text-white">
-                          {contact.first_name || contact.last_name
-                            ? `${contact.first_name || ''} ${contact.last_name || ''}`.trim()
-                            : '—'}
-                        </TableCell>
-                        <TableCell className="text-gray-600 dark:text-gray-400">
-                          {contact.email || '—'}
-                        </TableCell>
-                        <TableCell className="text-gray-900 dark:text-white">
-                          {formatPhoneNumber(contact.phone_number)}
-                        </TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <MoreVertical className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem className="hover:bg-primary/5">
-                                <Edit className="mr-2 h-4 w-4 text-primary" />
-                                Edit
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-destructive hover:bg-red-50 dark:hover:bg-red-950"
-                                onClick={() => {
-                                  if (confirm('Are you sure you want to delete this contact?')) {
-                                    deleteContactMutation.mutate(contact.id)
-                                  }
-                                }}
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Delete
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
+          <ContactsTable
+            contacts={filteredContacts}
+            onEdit={handleEditContact}
+            onDelete={handleDeleteContact}
+            onBulkDelete={handleBulkDelete}
+            isLoading={contactsLoading}
+          />
         )}
 
-        {/* Add Contact Dialog */}
-        <Dialog open={addContactDialogOpen} onOpenChange={setAddContactDialogOpen}>
-          <DialogContent className="bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-            <DialogHeader>
-              <DialogTitle className="text-lg text-gray-900 dark:text-white">
-                Add Contact
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-900 dark:text-white">
-                  Phone Number <span className="text-red-500">*</span>
-                </label>
-                <Input
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  placeholder="+1234567890"
-                  className="bg-white dark:bg-black border-gray-300 dark:border-gray-800"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-900 dark:text-white">First Name</label>
-                  <Input
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="John"
-                    className="bg-white dark:bg-black border-gray-300 dark:border-gray-800"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-900 dark:text-white">Last Name</label>
-                  <Input
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    placeholder="Doe"
-                    className="bg-white dark:bg-black border-gray-300 dark:border-gray-800"
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-900 dark:text-white">Email</label>
-                <Input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="john@example.com"
-                  className="bg-white dark:bg-black border-gray-300 dark:border-gray-800"
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-4 border-t border-gray-200 dark:border-gray-900">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setAddContactDialogOpen(false)
-                  setPhoneNumber('')
-                  setFirstName('')
-                  setLastName('')
-                  setEmail('')
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleAddContact}
-                disabled={createContactMutation.isPending || !phoneNumber.trim()}
-                className="bg-primary hover:bg-primary/90 text-white"
-              >
-                {createContactMutation.isPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Adding...
-                  </>
-                ) : (
-                  'Add Contact'
-                )}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+        {/* Contact Form Dialog */}
+        <ContactFormDialog
+          open={contactDialogOpen}
+          onOpenChange={setContactDialogOpen}
+          contact={editingContact}
+          folders={folders}
+          folderId={folderId}
+          onSubmit={handleContactSubmit}
+          isLoading={createMutation.isPending || updateMutation.isPending}
+        />
 
         {/* Import Dialog */}
-        <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
-          <DialogContent className="bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-            <DialogHeader>
-              <DialogTitle className="text-lg text-gray-900 dark:text-white">
-                Import Contacts
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-900 dark:text-white">
-                  CSV/XLSX File
-                </label>
-                <Input
-                  type="file"
-                  accept=".csv,.xlsx,.xls"
-                  onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                  className="bg-white dark:bg-black border-gray-300 dark:border-gray-800"
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-500">
-                  Upload a CSV or Excel file with columns: phone_number, first_name, last_name, email
-                </p>
+        <ImportDialog
+          open={importDialogOpen}
+          onOpenChange={setImportDialogOpen}
+          folders={folders}
+          onImportComplete={handleImportComplete}
+        />
+
+        {/* Folder Form Dialog - Disabled in simplified structure */}
+        {folder && (
+          <FolderFormDialog
+            open={folderDialogOpen}
+            onOpenChange={setFolderDialogOpen}
+            folder={folder}
+            onSubmit={handleFolderSubmit}
+            isLoading={false}
+          />
+        )}
+
+        {/* Delete Contact Confirmation Dialog */}
+        {deleteContactDialogOpen && contactToDelete && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white dark:bg-gray-900 rounded-lg p-6 max-w-md w-full mx-4">
+              <h3 className="text-lg font-semibold mb-2">Delete Contact</h3>
+              <p className="text-gray-600 dark:text-gray-400 mb-4">
+                Are you sure you want to delete this contact? This action cannot be undone.
+              </p>
+              <div className="flex gap-3 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setDeleteContactDialogOpen(false)
+                    setContactToDelete(null)
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleConfirmDeleteContact}
+                  disabled={deleteMutation.isPending}
+                >
+                  {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+                </Button>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 pt-4 border-t border-gray-200 dark:border-gray-900">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setImportDialogOpen(false)
-                  setSelectedFile(null)
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleImport}
-                disabled={!selectedFile}
-                className="bg-primary hover:bg-primary/90 text-white"
-              >
-                <Upload className="mr-2 h-4 w-4" />
-                Import
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+          </div>
+        )}
       </div>
     </AppLayout>
   )

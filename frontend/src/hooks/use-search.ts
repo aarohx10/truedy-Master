@@ -6,7 +6,7 @@ interface SearchResult {
   id: string
   title: string
   description: string
-  type: 'agent' | 'campaign' | 'contact' | 'call' | 'analytics' | 'voice-clone'
+  type: 'campaign' | 'contact' | 'call' | 'analytics' | 'voice-clone'
   href: string
   metadata?: {
     status?: string

@@ -54,7 +54,7 @@ export function Header() {
             className="relative w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 text-sm text-gray-500 dark:text-gray-500 bg-gray-50 dark:bg-gray-900 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-900 transition-all duration-300 ease-out hover:border-gray-300 dark:hover:border-gray-800 hover:shadow-sm hover:scale-[1.02] active:scale-[0.98]"
           >
             <Search className="h-4 w-4 flex-shrink-0 text-gray-400 dark:text-gray-600" />
-            <span className="hidden md:block flex-1 text-left truncate">Search agents, campaigns, contacts...</span>
+            <span className="hidden md:block flex-1 text-left truncate">Search campaigns, contacts, calls...</span>
             <span className="md:hidden flex-1 text-left truncate">Search...</span>
             <div className="hidden sm:flex items-center gap-1">
               <kbd className="inline-flex h-5 select-none items-center gap-1 rounded border border-gray-300 dark:border-gray-800 bg-white dark:bg-black px-1.5 font-mono text-[10px] font-medium text-gray-600 dark:text-gray-500">

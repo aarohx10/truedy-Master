@@ -33,8 +33,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Check,
-  Plus,
-  Bot
+  Plus
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useAuthClient } from '@/lib/clerk-auth-client'
@@ -284,41 +283,6 @@ export default function DashboardPage() {
             </h1>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            <Button 
-              variant="default"
-              size="sm" 
-              className="gap-2 bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30"
-              onClick={() => router.push('/agents')}
-            >
-              <Bot className="h-4 w-4" />
-              Create Agent
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="whitespace-nowrap">
-                  All agents
-                  <ChevronDown className="ml-2 h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-[280px] bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-                <div className="p-2">
-                  <input
-                    type="text"
-                    placeholder="Search agents..."
-                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-800 bg-white dark:bg-black text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-                <DropdownMenuSeparator className="bg-gray-200 dark:bg-gray-900" />
-                <DropdownMenuItem className="flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-900">
-                  <span className="text-gray-900 dark:text-white">All agents</span>
-                  <Check className="h-4 w-4 text-primary" />
-                </DropdownMenuItem>
-                <DropdownMenuSeparator className="bg-gray-200 dark:bg-gray-900" />
-                <div className="px-2 py-6 text-center">
-                  <p className="text-sm text-gray-500 dark:text-gray-500">No agents found</p>
-                  </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="whitespace-nowrap">

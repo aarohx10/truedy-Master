@@ -20,8 +20,8 @@ interface PerformanceChartProps {
 
 export function PerformanceChart({
   data,
-  title = 'Agent Performance',
-  description = 'Compare agent call volumes and success rates',
+  title = 'Performance',
+  description = 'Compare call volumes and success rates',
 }: PerformanceChartProps) {
   return (
     <Card>

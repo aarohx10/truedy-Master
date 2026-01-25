@@ -99,9 +99,9 @@ export function useCreateVoice() {
   return useMutation({
     mutationFn: async (data: {
       name: string
-      strategy: 'external' | 'native' | 'auto'
+      strategy: 'external' | 'auto'
       source: {
-        type: 'external' | 'native'
+        type: 'external'
         provider_voice_id?: string
         samples?: Array<{
           text: string

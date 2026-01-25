@@ -28,8 +28,6 @@ export function CampaignForm({ onSuccess, onCancel }: CampaignFormProps) {
     defaultValues: {
       name: '',
       description: '',
-      agentId: '',
-      contacts: [],
       schedule: {
         startDate: new Date(),
         timezone: 'America/New_York',
@@ -110,27 +108,6 @@ export function CampaignForm({ onSuccess, onCancel }: CampaignFormProps) {
           />
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="agentId">Select Agent</Label>
-          <Select
-            onValueChange={(value) => form.setValue('agentId', value)}
-            value={form.watch('agentId')}
-          >
-            <SelectTrigger id="agentId">
-              <SelectValue placeholder="Choose an agent" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">Sales Agent</SelectItem>
-              <SelectItem value="2">Support Agent</SelectItem>
-              <SelectItem value="3">Survey Agent</SelectItem>
-            </SelectContent>
-          </Select>
-          {form.formState.errors.agentId && (
-            <p className="text-sm text-destructive">
-              {form.formState.errors.agentId.message}
-            </p>
-          )}
-        </div>
       </div>
 
       {/* Schedule */}

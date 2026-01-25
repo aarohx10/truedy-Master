@@ -42,15 +42,6 @@ export const createVoiceSchema = z.object({
   settings: voiceSettingsSchema.optional(),
 })
 
-// Knowledge Base Validations
-export const createKnowledgeBaseSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100),
-  type: z.enum(['text', 'file', 'url', 'api']),
-  content: z.string().min(1, 'Content is required'),
-  fileUrl: z.string().url().optional(),
-  metadata: z.record(z.any()).optional(),
-})
-
 // Tool Validations
 export const toolConfigSchema = z.object({
   endpoint: z.string().url().optional(),
@@ -72,14 +63,6 @@ export const createToolSchema = z.object({
 })
 
 // Campaign Validations
-export const contactSchema = z.object({
-  phoneNumber: z.string().regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number'),
-  firstName: z.string().max(50).optional(),
-  lastName: z.string().max(50).optional(),
-  email: z.string().email('Invalid email').optional(),
-  customFields: z.record(z.any()).optional(),
-})
-
 export const campaignScheduleSchema = z.object({
   startDate: z.coerce.date(),
   endDate: z.coerce.date().optional(),
@@ -105,8 +88,6 @@ export const campaignSettingsSchema = z.object({
 const campaignBaseSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
   description: z.string().max(500).optional(),
-  agentId: z.string().min(1, 'Agent selection is required'),
-  contacts: z.array(contactSchema).min(1, 'At least one contact is required'),
   schedule: campaignScheduleSchema,
   settings: campaignSettingsSchema,
 })
@@ -126,6 +107,25 @@ export const createCampaignSchema = campaignBaseSchema.refine(
 
 export const updateCampaignSchema = campaignBaseSchema.partial().extend({
   status: z.enum(['draft', 'scheduled', 'running', 'paused', 'completed', 'cancelled']).optional(),
+})
+
+// Contact Validations
+export const contactFolderSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(100, 'Name must be 100 characters or less'),
+  description: z.string().max(500, 'Description must be 500 characters or less').optional(),
+})
+
+export const contactSchema = z.object({
+  folder_id: z.string().min(1, 'Folder ID is required'),
+  first_name: z.string().max(50, 'First name must be 50 characters or less').optional(),
+  last_name: z.string().max(50, 'Last name must be 50 characters or less').optional(),
+  email: z.string().email('Invalid email format').optional().or(z.literal('')),
+  phone_number: z.string().regex(/^\+?[1-9]\d{1,14}$/, 'Phone number must be in E.164 format (e.g., +12125550123)'),
+  metadata: z.record(z.any()).optional(),
+})
+
+export const contactBulkCreateSchema = z.object({
+  contacts: z.array(contactSchema).min(1, 'At least one contact is required'),
 })
 
 // Voice Cloning Validations
@@ -215,5 +215,7 @@ export type UpdateAgentInput = z.infer<typeof updateAgentSchema>
 export type CreateCampaignInput = z.infer<typeof createCampaignSchema>
 export type UpdateCampaignInput = z.infer<typeof updateCampaignSchema>
 export type CreateVoiceCloneInput = z.infer<typeof createVoiceCloneSchema>
+export type ContactFolderInput = z.infer<typeof contactFolderSchema>
 export type ContactInput = z.infer<typeof contactSchema>
+export type ContactBulkCreateInput = z.infer<typeof contactBulkCreateSchema>
 

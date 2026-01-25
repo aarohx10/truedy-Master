@@ -29,7 +29,6 @@ import { useState } from 'react'
 const callsOverTimeData: Array<{ date: string; calls: number }> = []
 const callsByStatusData: Array<{ name: string; value: number; color: string }> = []
 const costOverTimeData: Array<{ date: string; cost: number }> = []
-const agentPerformanceData: Array<{ name: string; calls: number; successRate: number }> = []
 const stats = [
   {
     title: 'Total Calls',
@@ -257,29 +256,7 @@ export default function AnalyticsPage() {
           </TabsContent>
 
           <TabsContent value="performance" className="space-y-4 sm:space-y-6">
-            {/* Agent Performance */}
-            <Card className="hover:border-primary/40 hover:shadow-lg transition-all">
-              <CardHeader>
-                <CardTitle className="text-base sm:text-lg text-gray-900 dark:text-white">Agent Performance</CardTitle>
-                <CardDescription className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
-                  Compare agent call volumes and success rates
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={agentPerformanceData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-gray-200 dark:text-gray-800" />
-                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'currentColor' }} className="text-gray-600 dark:text-gray-400" />
-                    <YAxis yAxisId="left" tick={{ fontSize: 11, fill: 'currentColor' }} className="text-gray-600 dark:text-gray-400" />
-                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: 'currentColor' }} className="text-gray-600 dark:text-gray-400" />
-                    <Tooltip contentStyle={{ backgroundColor: 'var(--background)', border: '1px solid var(--border)', color: 'var(--foreground)' }} />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar yAxisId="left" dataKey="calls" fill="hsl(217, 100%, 60%)" name="Total Calls" />
-                    <Bar yAxisId="right" dataKey="successRate" fill="#10b981" name="Success Rate %" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+            {/* Performance charts can be added here in the future */}
           </TabsContent>
 
           <TabsContent value="costs" className="space-y-4 sm:space-y-6">

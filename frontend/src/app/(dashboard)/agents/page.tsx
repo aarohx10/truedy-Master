@@ -1,606 +1,309 @@
 'use client'
 
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { AppLayout } from '@/components/layout/app-layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { AgentIcon } from '@/components/agent-icon'
-import { useAgentStore } from '@/stores/agent-store'
+import { Wand2, Plus, Search, Loader2, MoreVertical, Edit, Trash2, Play, Copy } from 'lucide-react'
 import { useAgents, useDeleteAgent } from '@/hooks/use-agents'
-import { CreateCallModal } from '@/components/calls/create-call-modal'
-import { useCreateCall } from '@/hooks/use-calls'
-import { useRouter } from 'next/navigation'
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Headphones, Wind, TrendingUp, Wand2, Check, Mic2, Search, Plus, MoreHorizontal, ExternalLink, Copy, Trash2, AlertCircle, Loader2, Phone } from 'lucide-react'
-import { Agent } from '@/types'
-import { useQueryClient } from '@tanstack/react-query'
 import { useToast } from '@/hooks/use-toast'
-import { useAuthClient } from '@/lib/clerk-auth-client'
-import { ListItemSkeleton } from '@/components/ui/list-skeleton'
+import { Agent } from '@/types'
+import { TemplateSelectionModal } from '@/components/agents/template-selection-modal'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { formatDistanceToNow } from 'date-fns'
 
 export default function AgentsPage() {
   const router = useRouter()
-  const queryClient = useQueryClient()
+  const { data: agents = [], isLoading, error } = useAgents()
   const { toast } = useToast()
-  const { setSelectedAgent } = useAgentStore()
-  const { isLoading: authLoading, clientId } = useAuthClient()
-  const { data: apiAgents, isLoading: apiLoading, error, isFetching, isFetched } = useAgents()
-  const deleteAgentMutation = useDeleteAgent()
-  const createCallMutation = useCreateCall()
+  const deleteMutation = useDeleteAgent()
+
   const [searchQuery, setSearchQuery] = useState('')
-  const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null)
-  const [callAgentId, setCallAgentId] = useState<string | null>(null)
-  
-  // Ensure we have a safe default for apiAgents
-  const safeAgents = apiAgents || []
-  
-  // Optimized real-time polling - only poll when needed
-  useEffect(() => {
-    if (!clientId) return
-    
-    const creatingAgentIds = safeAgents
-      .filter(agent => agent.status === 'creating')
-      .map(agent => agent.id)
-    
-    if (creatingAgentIds.length === 0) return
-    
-    // Poll every 3 seconds only for creating agents
-    const interval = setInterval(() => {
-      queryClient.refetchQueries({ 
-        queryKey: ['agents', clientId],
-        type: 'active' // Only refetch active queries
-      })
-    }, 3000)
-    
-    return () => clearInterval(interval)
-  }, [safeAgents, queryClient, clientId])
-  
-  // Memoize expensive computations
-  const formatAgentForDisplay = useCallback((agent: Agent) => {
-    const createdDate = agent.created_at 
-      ? new Date(agent.created_at).toLocaleDateString('en-US', { 
-          month: 'short', 
-          day: 'numeric', 
-          year: 'numeric', 
-          hour: 'numeric', 
-          minute: '2-digit',
-          hour12: true 
-        })
-      : 'Unknown'
-    
-    return {
-      id: agent.id,
-      name: agent.name || 'Unnamed Agent',
-      description: agent.description || '',
-      agentName: agent.name || 'Agent',
-      createdBy: 'You',
-      createdAt: createdDate,
-      status: agent.status,
-      fullAgent: agent,
-    }
-  }, [])
+  const [templateModalOpen, setTemplateModalOpen] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
-  const getNumericId = useCallback((id: string): number => {
-    let hash = 0
-    for (let i = 0; i < id.length; i++) {
-      const char = id.charCodeAt(i)
-      hash = ((hash << 5) - hash) + char
-      hash = hash & hash
-    }
-    return Math.abs(hash)
-  }, [])
+  const handleCreateAgent = () => {
+    setTemplateModalOpen(true)
+  }
 
-  // Memoize formatted agents
-  const displayAgents = useMemo(() => {
-    return safeAgents.map(formatAgentForDisplay)
-  }, [safeAgents, formatAgentForDisplay])
+  const handleEdit = (agent: Agent) => {
+    router.push(`/agents/${agent.id}`)
+  }
 
-  // Memoize filtered agents
-  const filteredAgents = useMemo(() => {
-    if (!searchQuery.trim()) return displayAgents
-    const query = searchQuery.toLowerCase()
-    return displayAgents.filter(agent => 
-      agent.name.toLowerCase().includes(query) ||
-      agent.description?.toLowerCase().includes(query) ||
-      agent.agentName?.toLowerCase().includes(query)
-    )
-  }, [displayAgents, searchQuery])
-  
-  // Simplified loading state logic
-  // Show loading skeleton only when:
-  // 1. Auth is still loading, OR
-  // 2. No clientId yet (waiting for auth), OR
-  // 3. API is loading AND we haven't fetched data yet (first load)
-  const isInitialLoading = authLoading || !clientId || (apiLoading && !isFetched)
-  
-  // Handle delete agent
-  const handleDeleteAgent = useCallback(async (agentId: string, agentName: string) => {
-    if (!confirm(`Are you sure you want to delete "${agentName}"? This action cannot be undone.`)) {
-      return
-    }
-    
-    setDeletingAgentId(agentId)
+  const handleDelete = (agent: Agent) => {
+    setAgentToDelete(agent)
+    setDeleteDialogOpen(true)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!agentToDelete) return
+
+    setIsDeleting(true)
     try {
-      await deleteAgentMutation.mutateAsync(agentId)
+      await deleteMutation.mutateAsync(agentToDelete.id)
       toast({
         title: 'Agent deleted',
-        description: `"${agentName}" has been deleted successfully.`,
+        description: `"${agentToDelete.name}" has been deleted.`,
       })
+      setDeleteDialogOpen(false)
+      setAgentToDelete(null)
     } catch (error) {
-      const rawError = error instanceof Error ? error : new Error(String(error))
-      console.error('[AGENTS_PAGE] Error deleting agent (RAW ERROR)', {
-        agentId,
-        agentName,
-        error: rawError,
-        errorMessage: rawError.message,
-        errorStack: rawError.stack,
-        errorName: rawError.name,
-        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
-      })
-      
+      const errorMessage = error instanceof Error ? error.message : 'Failed to delete agent'
       toast({
-        title: 'Error deleting agent',
-        description: rawError.message || 'Failed to delete agent. Please try again.',
+        title: 'Error',
+        description: errorMessage,
         variant: 'destructive',
-        duration: 10000,
       })
     } finally {
-      setDeletingAgentId(null)
+      setIsDeleting(false)
     }
-  }, [deleteAgentMutation, toast])
-  
-  // Handle duplicate agent
-  const handleDuplicateAgent = useCallback((agent: Agent) => {
-    // Navigate to new agent page with pre-filled data
-    setSelectedAgent(agent)
-    router.push('/agents/new?duplicate=true')
-  }, [setSelectedAgent, router])
+  }
 
-  // Handle make call
-  const handleMakeCall = useCallback((agentId: string) => {
-    setCallAgentId(agentId)
-  }, [])
+  const handleTest = (agent: Agent) => {
+    router.push(`/agents/${agent.id}?test=true`)
+  }
 
-  const handleCreateCall = useCallback(async (data: { agent_id: string; phone_number: string; direction: 'inbound' | 'outbound' }) => {
-    try {
-      await createCallMutation.mutateAsync(data)
-      toast({
-        title: 'Call initiated',
-        description: 'The call has been queued and will start shortly.',
-      })
-      setCallAgentId(null)
-      router.push('/calls')
-    } catch (error) {
-      const rawError = error instanceof Error ? error : new Error(String(error))
-      console.error('[AGENTS_PAGE] Error creating call (RAW ERROR)', {
-        data,
-        error: rawError,
-        errorMessage: rawError.message,
-        errorStack: rawError.stack,
-        errorName: rawError.name,
-        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
-      })
-      
-      toast({
-        title: 'Error creating call',
-        description: rawError.message || 'Failed to create call. Please try again.',
-        variant: 'destructive',
-        duration: 10000,
-      })
-    }
-  }, [createCallMutation, toast, router])
-  
+  const handleDuplicate = (agent: Agent) => {
+    // Navigate to new agent page with template data
+    router.push(`/agents/new?template=${agent.id}`)
+  }
 
-  // Get status badge color
-  const getStatusBadge = (status: string) => {
+  const filteredAgents = agents.filter((agent) =>
+    searchQuery === '' ||
+    agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    agent.description?.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  const getStatusBadgeVariant = (status: string) => {
     switch (status) {
       case 'active':
-        return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+        return 'default'
       case 'creating':
-        return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
-      case 'inactive':
-        return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
+        return 'secondary'
       case 'failed':
-        return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+        return 'destructive'
       default:
-        return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
+        return 'secondary'
     }
   }
 
   return (
     <AppLayout>
-        <div className="bg-white dark:bg-black xl:-mt-[72px] min-h-screen">
-          <div className="px-6 py-6">
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+              <Wand2 className="h-8 w-8" />
+              Agents
+            </h1>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              Create and manage AI agents for your calls
+            </p>
+          </div>
+          <Button
+            onClick={handleCreateAgent}
+            className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30 gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            Create New Agent
+          </Button>
+        </div>
 
-            {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white">Agents</h1>
-                  {isFetching && !isInitialLoading && (
-                    <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-                  )}
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
+          <Input
+            placeholder="Search agents..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 focus:ring-2 focus:ring-primary focus:border-primary"
+          />
+        </div>
+
+        {/* Agents List */}
+        <Card className="border-gray-200 dark:border-gray-900">
+          <CardContent className="p-6">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+              </div>
+            ) : error ? (
+              <div className="text-center py-12 text-red-500">
+                <p>Failed to load agents. Please try again.</p>
+              </div>
+            ) : filteredAgents.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-900 mb-4">
+                  <Wand2 className="h-8 w-8 text-gray-400 dark:text-gray-500" />
                 </div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  {!isInitialLoading && safeAgents.length > 0 
-                    ? `${safeAgents.length} agent${safeAgents.length !== 1 ? 's' : ''}`
-                    : 'Create and manage your AI agents'
-                  }
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                  {searchQuery ? 'No agents found' : 'No agents yet'}
+                </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 text-center max-w-md mb-4">
+                  {searchQuery
+                    ? 'Try adjusting your search query'
+                    : 'Create your first agent to start making AI-powered calls.'}
                 </p>
-              </div>
-              <div className="flex gap-2 w-full sm:w-auto">
-                <Button
-                  className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30 gap-2 flex-1 sm:flex-initial"
-                  onClick={() => router.push('/agents/new')}
-                  disabled={isInitialLoading}
-                >
-                  <Plus className="h-4 w-4" />
-                  New agent
-                </Button>
-              </div>
-            </div>
-
-            {/* Search Bar */}
-            <div className="relative mb-4">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
-              <Input
-                type="text"
-                placeholder="Search agents..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 pr-4 py-2 w-full border-gray-300 dark:border-gray-800 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
-                disabled={isInitialLoading}
-              />
-              {isFetching && !isInitialLoading && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-                </div>
-              )}
-            </div>
-
-            {/* Error Message */}
-            {error && (
-              <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900 rounded-lg flex items-center gap-3">
-                <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
-                <div>
-                  <p className="text-sm font-medium text-red-800 dark:text-red-300">Error loading agents</p>
-                  <p className="text-sm text-red-600 dark:text-red-400">{error instanceof Error ? error.message : 'Failed to load agents'}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Table - Desktop/Tablet */}
-            <div className="hidden md:block border border-gray-200 dark:border-gray-900 rounded-lg overflow-hidden">
-              {/* Table Header */}
-              <div className="grid grid-cols-[2fr,1fr,1.5fr,1.5fr,auto] gap-4 px-6 py-3 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-900">
-                <div className="text-sm font-medium text-gray-700 dark:text-gray-300">Name</div>
-                <div className="text-sm font-medium text-gray-700 dark:text-gray-300">Status</div>
-                <div className="text-sm font-medium text-gray-700 dark:text-gray-300">Created by</div>
-                <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Created at
-                </div>
-                <div className="w-8"></div>
-              </div>
-
-              {/* Table Rows */}
-              <div className="bg-white dark:bg-black divide-y divide-gray-200 dark:divide-gray-900">
-                {isInitialLoading ? (
-                  <>
-                    {[...Array(5)].map((_, i) => (
-                      <ListItemSkeleton key={`skeleton-${i}`} variant="table" />
-                    ))}
-                  </>
-                ) : error ? (
-                  <div className="px-6 py-8 text-center">
-                    <AlertCircle className="h-8 w-8 text-red-500 mx-auto mb-2" />
-                    <p className="text-sm font-medium text-red-600 dark:text-red-400 mb-1">Error loading agents</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      {error instanceof Error ? error.message : 'Failed to load agents. Please try again.'}
-                    </p>
-                  </div>
-                ) : filteredAgents.length === 0 ? (
-                  <div className="px-6 py-12 text-center">
-                    <div className="max-w-md mx-auto">
-                      <div className="mb-4 flex justify-center">
-                        <div className="h-16 w-16 rounded-full bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
-                          <Headphones className="h-8 w-8 text-gray-400 dark:text-gray-600" />
-                        </div>
-                      </div>
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                        {searchQuery ? 'No agents found' : 'No agents yet'}
-                      </h3>
-                      <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
-                        {searchQuery 
-                          ? 'Try adjusting your search terms to find what you\'re looking for.'
-                          : 'Create your first AI agent to get started with voice calling campaigns.'
-                        }
-                      </p>
-                      {!searchQuery && (
-                        <Button
-                          onClick={() => router.push('/agents/new')}
-                          className="bg-primary hover:bg-primary/90 text-white"
-                        >
-                          <Plus className="h-4 w-4 mr-2" />
-                          Create your first agent
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  filteredAgents.map((agent) => (
-                  <div
-                    key={agent.id}
-                    className="grid grid-cols-[2fr,1fr,1.5fr,1.5fr,auto] gap-4 px-6 py-4 hover:bg-primary/5 cursor-pointer transition-all border-l-2 border-transparent hover:border-primary"
-                    onClick={() => {
-                      if (agent.fullAgent) {
-                        setSelectedAgent(agent.fullAgent)
-                        router.push('/agents/new')
-                      }
-                    }}
+                {!searchQuery && (
+                  <Button
+                    onClick={handleCreateAgent}
+                    className="bg-primary hover:bg-primary/90 text-white"
                   >
-                    <div className="flex items-center gap-3">
-                      <AgentIcon agentId={getNumericId(agent.id)} size={40} />
-                      <div className="flex flex-col">
-                      <span className="text-sm font-medium text-gray-900 dark:text-white">{agent.name}</span>
-                        {agent.description && (
-                          <span className="text-xs text-gray-500 dark:text-gray-500 truncate max-w-xs">{agent.description}</span>
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getStatusBadge(agent.status || 'inactive')}`}>
-                        {agent.status === 'creating' && (
-                          <span className="mr-1.5 h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
-                        )}
-                        {agent.status || 'inactive'}
-                      </span>
-                    </div>
-                    <div className="text-sm text-gray-600 dark:text-gray-400">{agent.createdBy}</div>
-                    <div className="text-sm text-gray-600 dark:text-gray-400">{agent.createdAt}</div>
-                    <div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                            }}
-                          >
-                            <MoreHorizontal className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-56 bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-                          <DropdownMenuItem 
-                            className="cursor-pointer text-gray-700 dark:text-gray-300 hover:bg-primary/5"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              if (agent.fullAgent) {
-                                setSelectedAgent(agent.fullAgent)
-                                router.push('/agents/new')
-                              }
-                            }}
-                          >
-                            <ExternalLink className="mr-2 h-4 w-4 text-primary" />
-                            Edit agent
-                          </DropdownMenuItem>
-                          {agent.status === 'active' && (
-                            <DropdownMenuItem 
-                              className="cursor-pointer text-gray-700 dark:text-gray-300 hover:bg-primary/5"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleMakeCall(agent.id)
-                              }}
-                            >
-                              <Phone className="mr-2 h-4 w-4 text-primary" />
-                              Make call
-                            </DropdownMenuItem>
-                          )}
-                          <DropdownMenuSeparator className="bg-gray-200 dark:bg-gray-900" />
-                          <DropdownMenuItem 
-                            className="cursor-pointer text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              if (agent.fullAgent) {
-                                handleDuplicateAgent(agent.fullAgent)
-                              }
-                            }}
-                          >
-                            <Copy className="mr-2 h-4 w-4" />
-                            Duplicate agent
-                          </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            className="cursor-pointer text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              if (agent.fullAgent) {
-                                handleDeleteAgent(agent.id, agent.name)
-                              }
-                            }}
-                            disabled={deletingAgentId === agent.id}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            {deletingAgentId === agent.id ? 'Deleting...' : 'Delete agent'}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </div>
-                  ))
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create New Agent
+                  </Button>
                 )}
               </div>
-            </div>
-
-            {/* Mobile Card View */}
-            <div className="md:hidden space-y-3">
-              {isInitialLoading ? (
-                <>
-                  {[...Array(5)].map((_, i) => (
-                    <ListItemSkeleton key={`skeleton-${i}`} variant="card" />
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Voice</TableHead>
+                    <TableHead>Tools</TableHead>
+                    <TableHead>Updated</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredAgents.map((agent) => (
+                    <TableRow key={agent.id} className="hover:bg-gray-50 dark:hover:bg-gray-900">
+                      <TableCell className="font-medium">
+                        <button
+                          onClick={() => handleEdit(agent)}
+                          className="text-left hover:text-primary transition-colors"
+                        >
+                          {agent.name}
+                        </button>
+                      </TableCell>
+                      <TableCell className="text-gray-600 dark:text-gray-400">
+                        {agent.description || 'No description'}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={getStatusBadgeVariant(agent.status)}>
+                          {agent.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm text-gray-600 dark:text-gray-400">
+                        {agent.voice_id ? 'Configured' : 'Not set'}
+                      </TableCell>
+                      <TableCell className="text-sm text-gray-600 dark:text-gray-400">
+                        {agent.tools?.length || 0} tool{agent.tools?.length !== 1 ? 's' : ''}
+                      </TableCell>
+                      <TableCell className="text-sm text-gray-600 dark:text-gray-400">
+                        {formatDistanceToNow(new Date(agent.updated_at), { addSuffix: true })}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleEdit(agent)}>
+                              <Edit className="h-4 w-4 mr-2" />
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleTest(agent)}>
+                              <Play className="h-4 w-4 mr-2" />
+                              Test
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleDuplicate(agent)}>
+                              <Copy className="h-4 w-4 mr-2" />
+                              Duplicate
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleDelete(agent)}
+                              className="text-red-600 dark:text-red-400"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </>
-              ) : error ? (
-                <div className="p-8 text-center border border-gray-200 dark:border-gray-900 rounded-lg">
-                  <AlertCircle className="h-8 w-8 text-red-500 mx-auto mb-2" />
-                  <p className="text-sm font-medium text-red-600 dark:text-red-400 mb-1">Error loading agents</p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    {error instanceof Error ? error.message : 'Failed to load agents. Please try again.'}
-                  </p>
-                </div>
-              ) : filteredAgents.length === 0 ? (
-                <div className="p-8 text-center border border-gray-200 dark:border-gray-900 rounded-lg">
-                  <div className="mb-4 flex justify-center">
-                    <div className="h-16 w-16 rounded-full bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
-                      <Headphones className="h-8 w-8 text-gray-400 dark:text-gray-600" />
-                    </div>
-                  </div>
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                    {searchQuery ? 'No agents found' : 'No agents yet'}
-                  </h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
-                    {searchQuery 
-                      ? 'Try adjusting your search terms to find what you\'re looking for.'
-                      : 'Create your first AI agent to get started with voice calling campaigns.'
-                    }
-                  </p>
-                  {!searchQuery && (
-                    <Button
-                      onClick={() => router.push('/agents/new')}
-                      className="bg-primary hover:bg-primary/90 text-white w-full"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Create your first agent
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                filteredAgents.map((agent) => (
-                <div
-                  key={agent.id}
-                  className="border border-gray-200 dark:border-gray-900 rounded-lg p-4 hover:bg-primary/5 hover:border-primary/40 cursor-pointer transition-all"
-                  onClick={() => {
-                    if (agent.fullAgent) {
-                      setSelectedAgent(agent.fullAgent)
-                      router.push('/agents/new')
-                    }
-                  }}
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3">
-                        <AgentIcon agentId={getNumericId(agent.id)} size={36} />
-                        <div className="flex-1 min-w-0">
-                        <h3 className="text-base font-semibold text-gray-900 dark:text-white truncate">{agent.name}</h3>
-                          {agent.description && (
-                            <p className="text-xs text-gray-500 dark:text-gray-500 truncate mt-0.5">{agent.description}</p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 mt-2 ml-11">
-                        <p className="text-sm text-gray-600 dark:text-gray-400">By {agent.createdBy}</p>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getStatusBadge(agent.status || 'inactive')}`}>
-                          {agent.status === 'creating' && (
-                            <span className="mr-1 h-1 w-1 animate-pulse rounded-full bg-current" />
-                          )}
-                          {agent.status || 'inactive'}
-                        </span>
-                      </div>
-                    </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 flex-shrink-0"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                          }}
-                        >
-                          <MoreHorizontal className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-56 bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-                        <DropdownMenuItem 
-                          className="cursor-pointer text-gray-700 dark:text-gray-300 hover:bg-primary/5"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (agent.fullAgent) {
-                              setSelectedAgent(agent.fullAgent)
-                              router.push('/agents/new')
-                            }
-                          }}
-                        >
-                          <ExternalLink className="mr-2 h-4 w-4 text-primary" />
-                          Edit agent
-                        </DropdownMenuItem>
-                        {agent.status === 'active' && (
-                          <DropdownMenuItem 
-                            className="cursor-pointer text-gray-700 dark:text-gray-300 hover:bg-primary/5"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleMakeCall(agent.id)
-                            }}
-                          >
-                            <Phone className="mr-2 h-4 w-4 text-primary" />
-                            Make call
-                          </DropdownMenuItem>
-                        )}
-                        <DropdownMenuSeparator className="bg-gray-200 dark:bg-gray-900" />
-                        <DropdownMenuItem 
-                          className="cursor-pointer text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (agent.fullAgent) {
-                              handleDuplicateAgent(agent.fullAgent)
-                            }
-                          }}
-                        >
-                          <Copy className="mr-2 h-4 w-4" />
-                          Duplicate agent
-                        </DropdownMenuItem>
-                        <DropdownMenuItem 
-                          className="cursor-pointer text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (agent.fullAgent) {
-                              handleDeleteAgent(agent.id, agent.name)
-                            }
-                          }}
-                          disabled={deletingAgentId === agent.id}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          {deletingAgentId === agent.id ? 'Deleting...' : 'Delete agent'}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                  <div className="text-sm text-gray-500 dark:text-gray-500">
-                    {agent.createdAt}
-                  </div>
-                </div>
-                ))
-              )}
-            </div>
-          </div>
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
 
-          {/* Create Call Modal */}
-          {callAgentId && (
-            <CreateCallModal
-              isOpen={!!callAgentId}
-              onClose={() => setCallAgentId(null)}
-              onCreateCall={handleCreateCall}
-              agents={apiAgents.filter(a => a.id === callAgentId && a.status === 'active')}
-              isLoading={createCallMutation.isPending}
-            />
-          )}
-        </div>
-      </AppLayout>
+        {/* Template Selection Modal */}
+        <TemplateSelectionModal
+          open={templateModalOpen}
+          onOpenChange={setTemplateModalOpen}
+        />
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Agent</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete &quot;{agentToDelete?.name}&quot;? This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setDeleteDialogOpen(false)
+                  setAgentToDelete(null)
+                }}
+                disabled={isDeleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete'
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </AppLayout>
   )
 }

@@ -46,13 +46,6 @@ export const DAYS_OF_WEEK = [
   { value: 6, label: 'Saturday' },
 ] as const
 
-// Agent Statuses
-export const AGENT_STATUSES = [
-  { value: 'draft', label: 'Draft', color: 'gray' },
-  { value: 'active', label: 'Active', color: 'green' },
-  { value: 'inactive', label: 'Inactive', color: 'red' },
-  { value: 'testing', label: 'Testing', color: 'blue' },
-] as const
 
 // Campaign Statuses
 export const CAMPAIGN_STATUSES = [
@@ -83,19 +76,6 @@ export const VOICE_CLONE_STATUSES = [
   { value: 'ready', label: 'Ready', color: 'green' },
   { value: 'failed', label: 'Failed', color: 'red' },
 ] as const
-
-// Default Agent Settings
-export const DEFAULT_AGENT_SETTINGS = {
-  temperature: 0.7,
-  maxTokens: 500,
-  topP: 1,
-  frequencyPenalty: 0,
-  presencePenalty: 0,
-  endCallPhrases: ['goodbye', 'thank you', 'bye'],
-  maxCallDuration: 600,
-  voicemailDetection: true,
-  recordCalls: true,
-}
 
 // Default Campaign Settings
 export const DEFAULT_CAMPAIGN_SETTINGS = {
@@ -141,7 +121,6 @@ export const UPLOAD_LIMITS = {
 // API Rate Limits
 export const RATE_LIMITS = {
   calls: 100,
-  agents: 50,
   campaigns: 20,
   voiceClones: 10,
 }
@@ -169,14 +148,9 @@ export const NAV_ITEMS = [
     category: 'Build',
   },
   {
-    title: 'Agents',
-    href: '/agents',
-    icon: 'Wand2',
-  },
-  {
     title: 'Knowledge Base',
-    href: '/rag',
-    icon: 'FolderOpen',
+    href: '/knowledge-base',
+    icon: 'BookOpen',
   },
   {
     title: 'Integrations',
@@ -232,9 +206,6 @@ export const NAV_ITEMS = [
 // Quick Actions
 export const QUICK_ACTIONS = [
   {
-    title: 'Create Agent',
-    description: 'Build a new AI voice agent',
-    href: '/agents/new',
     icon: 'Bot',
     color: 'blue',
   },
@@ -246,16 +217,16 @@ export const QUICK_ACTIONS = [
     color: 'purple',
   },
   {
-    title: 'Clone Voice',
-    description: 'Create a custom voice clone',
-    href: '/voice-cloning/new',
+    title: 'Import Voice',
+    description: 'Import a voice from ElevenLabs, Cartesia, or LMNT',
+    href: '/voice-cloning', // Voice cloning removed - import handled in modal
     icon: 'Mic',
     color: 'green',
   },
   {
     title: 'Import Contacts',
     description: 'Upload a contact list',
-    href: '/contacts/import',
+    href: '/contacts',
     icon: 'Upload',
     color: 'orange',
   },

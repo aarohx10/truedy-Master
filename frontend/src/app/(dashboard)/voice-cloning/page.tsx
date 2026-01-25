@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { AddCustomVoiceModal } from '@/components/voice/add-custom-voice-modal'
-import { AgentIcon } from '@/components/agent-icon'
+import { Mic2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -184,13 +184,13 @@ export default function VoiceCloningPage() {
       if (voice.status === 'training') {
         toast({
           title: 'Voice is still training',
-          description: voice.training_info?.message || 'Voice is still being cloned. Preview will be available when training completes.',
+          description: voice.training_info?.message || 'Voice is still being processed. Preview will be available when processing completes.',
           variant: 'default',
         })
       } else if (voice.status === 'failed') {
         toast({
           title: 'Voice training failed',
-          description: voice.training_info?.message || 'Voice cloning failed. Please try creating a new voice.',
+          description: voice.training_info?.message || 'Voice import failed. Please try creating a new voice.',
           variant: 'destructive',
         })
       } else {
@@ -318,16 +318,6 @@ export default function VoiceCloningPage() {
     }
   }
 
-  // Convert string ID to number for AgentIcon component
-  const getNumericId = (id: string): number => {
-    let hash = 0
-    for (let i = 0; i < id.length; i++) {
-      const char = id.charCodeAt(i)
-      hash = ((hash << 5) - hash) + char
-      hash = hash & hash // Convert to 32-bit integer
-    }
-    return Math.abs(hash)
-  }
 
   // Reset all filters
   const resetAllFilters = useCallback(() => {
@@ -348,7 +338,7 @@ export default function VoiceCloningPage() {
     try {
       logger.logUserAction('voice_added', { voiceName: voiceData.name, source: voiceData.source, provider: voiceData.provider })
       
-      // Voice clone and community voices are now both handled inside the modal
+      // Voice import and cloning are handled inside the modal
       // This callback is just for closing and refreshing
       
       // Close modal first
@@ -649,7 +639,6 @@ export default function VoiceCloningPage() {
                         </button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-                        <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">Add to Agent</DropdownMenuItem>
                         <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">View Details</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -752,8 +741,10 @@ export default function VoiceCloningPage() {
                   >
                     {/* Top Row - Mobile */}
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                      {/* Voice Icon - using AgentIcon with unique gradient */}
-                      <AgentIcon agentId={getNumericId(voice.id)} size={40} />
+                      {/* Voice Icon */}
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
+                        <Mic2 className="h-5 w-5 text-primary" />
+                      </div>
 
                       {/* Voice Info */}
                       <div className="flex-1 min-w-0">
@@ -811,7 +802,6 @@ export default function VoiceCloningPage() {
                             </button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-                            <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">Add to Agent</DropdownMenuItem>
                             <DropdownMenuItem 
                               className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
                               onClick={() => handleDeleteVoice(voice.id, voice.name)}
@@ -897,7 +887,6 @@ export default function VoiceCloningPage() {
                             </button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-                            <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">Add to Agent</DropdownMenuItem>
                             <DropdownMenuSeparator className="bg-gray-200 dark:border-gray-900" />
                             <DropdownMenuItem 
                               className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"

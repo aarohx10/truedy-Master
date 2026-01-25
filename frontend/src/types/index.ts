@@ -28,42 +28,7 @@ export interface WorkspaceSettings {
   defaultVoice?: string;
   webhookUrl?: string;
   customDomain?: string;
-}
-
-// Agent Types (matching backend schema)
-export interface Agent {
-  id: string;
-  client_id: string;
-  ultravox_agent_id?: string;
-  name: string;
-  description?: string;
-  voice_id: string;
-  system_prompt: string;
-  model: string;
-  tools: Array<{
-    tool_id: string;
-    ultravox_tool_id?: string;
-    enabled: boolean;
-    parameters?: Record<string, any>;
-  }>;
-  knowledge_bases: string[]; // Array of KB IDs
-  status: AgentStatus;
-  created_at: string;
-  updated_at: string;
-}
-
-export type AgentStatus = 'creating' | 'active' | 'inactive' | 'failed';
-
-export interface AgentSettings {
-  temperature: number;
-  maxTokens: number;
-  topP: number;
-  frequencyPenalty: number;
-  presencePenalty: number;
-  endCallPhrases: string[];
-  maxCallDuration: number;
-  voicemailDetection: boolean;
-  recordCalls: boolean;
+  recordCalls?: boolean;
 }
 
 // Voice Types (matching backend schema)
@@ -106,27 +71,6 @@ export interface VoiceSettings {
   useSpeakerBoost?: boolean;
 }
 
-// Knowledge Base Types (matching backend schema)
-export interface KnowledgeBase {
-  id: string;
-  client_id: string;
-  name: string;
-  description?: string;
-  language: string;
-  ultravox_corpus_id?: string;
-  status: KnowledgeBaseStatus;
-  created_at: string;
-  updated_at: string;
-  document_counts?: {
-    total: number;
-    indexed: number;
-    processing: number;
-    failed: number;
-  };
-}
-
-export type KnowledgeBaseStatus = 'creating' | 'ready' | 'processing' | 'failed';
-
 // Tool Types
 export interface Tool {
   id: string;
@@ -154,7 +98,7 @@ export interface ToolConfig {
 export interface Campaign {
   id: string;
   client_id: string;
-  agent_id: string;
+  agent_id?: string;
   name: string;
   schedule_type: 'immediate' | 'scheduled';
   scheduled_at?: string;
@@ -167,20 +111,6 @@ export interface Campaign {
 }
 
 export type CampaignStatus = 'draft' | 'scheduled' | 'active' | 'completed' | 'failed' | 'cancelled';
-
-export interface Contact {
-  id: string;
-  phoneNumber: string;
-  firstName?: string;
-  lastName?: string;
-  email?: string;
-  customFields?: Record<string, any>;
-  status: ContactStatus;
-  callAttempts: number;
-  lastCallAt?: Date;
-}
-
-export type ContactStatus = 'pending' | 'calling' | 'completed' | 'failed' | 'skipped';
 
 export interface CampaignSchedule {
   startDate: Date;
@@ -220,7 +150,7 @@ export interface CampaignStats {
 export interface Call {
   id: string;
   client_id: string;
-  agent_id: string;
+  agent_id?: string;
   ultravox_call_id?: string;
   phone_number: string;
   direction: 'inbound' | 'outbound';
@@ -287,7 +217,6 @@ export interface Analytics {
   overview: OverviewStats;
   calls: CallAnalytics;
   campaigns: CampaignAnalytics;
-  agents: AgentAnalytics;
   costs: CostAnalytics;
   timeRange: TimeRange;
 }
@@ -317,14 +246,9 @@ export interface CampaignAnalytics {
   activeCount: number;
 }
 
-export interface AgentAnalytics {
-  byAgent: Array<{ agentId: string; name: string; callCount: number; successRate: number }>;
-  averageResponseTime: number;
-}
 
 export interface CostAnalytics {
   byDay: Array<{ date: string; cost: number }>;
-  byAgent: Array<{ agentId: string; name: string; cost: number }>;
   byCampaign: Array<{ campaignId: string; name: string; cost: number }>;
   projectedMonthlyCost: number;
 }
@@ -356,100 +280,9 @@ export interface PaginatedResponse<T> {
 }
 
 // Form Types (matching backend schema)
-export interface CreateAgentData {
-  name: string;
-  description?: string;
-  voice_id?: string; // Optional - can be undefined/null
-  system_prompt: string;
-  model?: string; // Default: 'fixie-ai/ultravox-v0_4-8k'
-  tools?: Array<{
-    tool_id: string;
-    enabled?: boolean;
-    parameters?: Record<string, any>;
-  }>;
-  knowledge_bases?: string[];
-  // Ultravox API fields
-  agentLanguage?: string;
-  firstMessage?: string;
-  disableInterruptions?: boolean;
-  selectedLLM?: string;
-  temperature?: number;
-  stability?: number;
-  similarity?: number;
-  speed?: number;
-  turnTimeout?: number;
-  maxConversationDuration?: number;
-  // New fields from Ultravox UI
-  firstMessageDelay?: number;
-  firstSpeaker?: string;
-  joinTimeout?: number;
-  timeExceededMessage?: string;
-  // Voice Activity Detection parameters
-  turnEndpointDelay?: number;
-  minimumTurnDuration?: number;
-  minimumInterruptionDuration?: number;
-  frameActivationThreshold?: number;
-  // Additional Ultravox API fields
-  confidenceThreshold?: number;
-  fallbackResponse?: string;
-  timezone?: string;
-  personality?: string;
-  voicePitch?: number;
-  voiceStyle?: number;
-  useSpeakerBoost?: boolean;
-  // Knowledge base customization fields
-  knowledgeBaseSearchEnabled?: boolean;
-  knowledgeBaseContextWindow?: number;
-}
-
-export interface UpdateAgentData {
-  name?: string;
-  description?: string;
-  system_prompt?: string;
-  voice_id?: string;
-  tools?: Array<{
-    tool_id: string;
-    enabled?: boolean;
-    parameters?: Record<string, any>;
-  }>;
-  knowledge_bases?: string[];
-  // Ultravox API fields
-  agentLanguage?: string;
-  firstMessage?: string;
-  disableInterruptions?: boolean;
-  selectedLLM?: string;
-  temperature?: number;
-  stability?: number;
-  similarity?: number;
-  speed?: number;
-  turnTimeout?: number;
-  maxConversationDuration?: number;
-  // New fields from Ultravox UI
-  firstMessageDelay?: number;
-  firstSpeaker?: string;
-  joinTimeout?: number;
-  timeExceededMessage?: string;
-  // Voice Activity Detection parameters
-  turnEndpointDelay?: number;
-  minimumTurnDuration?: number;
-  minimumInterruptionDuration?: number;
-  frameActivationThreshold?: number;
-  // Additional Ultravox API fields
-  confidenceThreshold?: number;
-  fallbackResponse?: string;
-  timezone?: string;
-  personality?: string;
-  voicePitch?: number;
-  voiceStyle?: number;
-  useSpeakerBoost?: boolean;
-  // Knowledge base customization fields
-  knowledgeBaseSearchEnabled?: boolean;
-  knowledgeBaseContextWindow?: number;
-}
-
 export interface CreateCampaignData {
   name: string;
-  agent_id: string;
+  agent_id?: string;
   schedule_type: 'immediate' | 'scheduled';
   scheduled_at?: string;
   timezone?: string; // Default: 'UTC'
@@ -478,10 +311,112 @@ export interface CampaignContactsUpload {
   contacts?: CampaignContact[];
 }
 
+// Contact Management Types
+export interface ContactFolder {
+  id: string;
+  client_id: string;
+  name: string;
+  description?: string;
+  contact_count?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Contact {
+  id: string;
+  client_id: string;
+  folder_id: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  phone_number: string;
+  metadata?: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+  folder?: {
+    id: string;
+    name: string;
+  };
+}
+
+export interface CreateContactFolderData {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateContactFolderData {
+  name?: string;
+  description?: string;
+}
+
+export interface CreateContactData {
+  folder_id: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  phone_number: string;
+  metadata?: Record<string, any>;
+}
+
+export interface UpdateContactData {
+  folder_id?: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  phone_number?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface ContactImportRequest {
+  folder_id: string;
+  file_key?: string;
+  contacts?: CreateContactData[];
+}
+
+export interface ContactImportResponse {
+  successful: number;
+  failed: number;
+  errors?: Array<{ row: number; error: string }>;
+}
+
 export interface CreateVoiceCloneData {
   name: string;
   description?: string;
   settings: VoiceCloneSettings;
+}
+
+// Knowledge Base Types
+export interface KnowledgeBase {
+  id: string;
+  client_id: string;
+  name: string;
+  description?: string;
+  content?: string; // Extracted text
+  file_type?: string;
+  file_size?: number;
+  file_name?: string;
+  status: 'creating' | 'ready' | 'failed';
+  ultravox_tool_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FileData {
+  filename: string;
+  data: string; // Base64 encoded file data
+  content_type: string;
+}
+
+export interface CreateKnowledgeBaseData {
+  name: string;
+  description?: string;
+  file: File; // Frontend passes File, hook converts to base64
+}
+
+export interface UpdateKnowledgeBaseData {
+  name?: string;
+  description?: string;
+  content?: string;
 }
 
 // Notification Types
@@ -496,4 +431,166 @@ export interface Notification {
 }
 
 export type NotificationType = 'info' | 'success' | 'warning' | 'error';
+
+// Agent Types (matching backend schema)
+export interface Agent {
+  id: string;
+  client_id: string;
+  ultravox_agent_id?: string;
+  name: string;
+  description?: string;
+  voice_id: string;
+  system_prompt: string;
+  model: string;
+  tools: string[]; // Array of tool IDs
+  knowledge_bases: string[]; // Array of knowledge base IDs
+  status: AgentStatus;
+  created_at: string;
+  updated_at: string;
+  
+  // Call template fields
+  call_template_name?: string;
+  greeting_settings?: GreetingSettings;
+  inactivity_messages?: InactivityMessage[];
+  temperature?: number;
+  language_hint?: string;
+  time_exceeded_message?: string;
+  recording_enabled?: boolean;
+  join_timeout?: string;
+  max_duration?: string;
+  initial_output_medium?: MessageMedium;
+  vad_settings?: VADSettings;
+  template_id?: string;
+  
+  // Legacy fields
+  configuration?: Record<string, any>;
+  success_criteria?: string;
+  extraction_schema?: Record<string, any>;
+  crm_webhook_url?: string;
+  crm_webhook_secret?: string;
+}
+
+export type AgentStatus = 'creating' | 'active' | 'failed';
+
+export type MessageMedium = 'MESSAGE_MEDIUM_VOICE' | 'MESSAGE_MEDIUM_TEXT' | 'MESSAGE_MEDIUM_UNSPECIFIED';
+
+export type FirstSpeaker = 'agent' | 'user';
+
+export interface GreetingSettings {
+  first_speaker: FirstSpeaker;
+  text?: string;
+  prompt?: string;
+  delay?: string;
+  uninterruptible?: boolean;
+  fallback_delay?: string;
+  fallback_text?: string;
+  fallback_prompt?: string;
+}
+
+export type EndBehavior = 'END_BEHAVIOR_UNSPECIFIED' | 'END_BEHAVIOR_HANG_UP_SOFT' | 'END_BEHAVIOR_HANG_UP_STRICT';
+
+export interface InactivityMessage {
+  duration: string; // e.g., "30s"
+  message: string;
+  endBehavior?: EndBehavior;
+}
+
+export interface VADSettings {
+  turn_endpoint_delay?: string; // e.g., "500ms"
+  minimum_turn_duration?: string; // e.g., "200ms"
+  minimum_interruption_duration?: string; // e.g., "100ms"
+  frame_activation_threshold?: number; // 0-1
+}
+
+// Agent Template Types
+export interface AgentTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  system_prompt: string;
+  category?: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Agent Form Data Types
+export interface CreateAgentData {
+  name: string;
+  description?: string;
+  voice_id: string;
+  system_prompt: string;
+  model?: string;
+  tools?: string[];
+  knowledge_bases?: string[];
+  template_id?: string;
+  
+  // Call template fields
+  call_template_name?: string;
+  greeting_settings?: GreetingSettings;
+  inactivity_messages?: InactivityMessage[];
+  temperature?: number;
+  language_hint?: string;
+  time_exceeded_message?: string;
+  recording_enabled?: boolean;
+  join_timeout?: string;
+  max_duration?: string;
+  initial_output_medium?: MessageMedium;
+  vad_settings?: VADSettings;
+  
+  // Legacy fields
+  success_criteria?: string;
+  extraction_schema?: Record<string, any>;
+  crm_webhook_url?: string;
+  crm_webhook_secret?: string;
+}
+
+export interface UpdateAgentData {
+  name?: string;
+  description?: string;
+  voice_id?: string;
+  system_prompt?: string;
+  model?: string;
+  tools?: string[];
+  knowledge_bases?: string[];
+  
+  // Call template fields
+  call_template_name?: string;
+  greeting_settings?: GreetingSettings;
+  inactivity_messages?: InactivityMessage[];
+  temperature?: number;
+  language_hint?: string;
+  time_exceeded_message?: string;
+  recording_enabled?: boolean;
+  join_timeout?: string;
+  max_duration?: string;
+  initial_output_medium?: MessageMedium;
+  vad_settings?: VADSettings;
+  
+  // Legacy fields
+  success_criteria?: string;
+  extraction_schema?: Record<string, any>;
+  crm_webhook_url?: string;
+  crm_webhook_secret?: string;
+}
+
+// Agent Test Call Types
+export interface AgentTestCallResponse {
+  call_id: string;
+  join_url: string;
+  agent_id: string;
+  created_at: string;
+}
+
+// Agent AI Assistance Types
+export interface AgentAIAssistRequest {
+  prompt: string;
+  context?: Partial<Agent>;
+  action?: 'improve_prompt' | 'suggest_greeting' | string;
+}
+
+export interface AgentAIAssistResponse {
+  suggestion: string;
+  improved_content?: string;
+}
 

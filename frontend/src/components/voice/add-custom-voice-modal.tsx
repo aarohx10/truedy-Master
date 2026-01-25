@@ -9,10 +9,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Upload, Cloud, X, Loader2 } from 'lucide-react'
+import { Upload, Cloud, X, Loader2, Bug } from 'lucide-react'
 import { useCreateVoice } from '@/hooks/use-voices'
-import { apiClient } from '@/lib/api'
+import { apiClient, API_URL } from '@/lib/api'
 import { useToast } from '@/hooks/use-toast'
+import { useAuthClient } from '@/lib/clerk-auth-client'
 
 interface AddCustomVoiceModalProps {
   isOpen: boolean
@@ -34,10 +35,20 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
   const [providerVoiceId, setProviderVoiceId] = useState('')
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [isCreating, setIsCreating] = useState(false)
+  const [debugLogs, setDebugLogs] = useState<string[]>([])
+  const [showDebugPanel, setShowDebugPanel] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isProcessingRef = useRef(false) // Prevent multiple simultaneous calls
   const { toast } = useToast()
   const createVoiceMutation = useCreateVoice()
+  const { getToken } = useAuthClient()
+
+  const addDebugLog = (message: string, data?: any) => {
+    const timestamp = new Date().toISOString()
+    const logEntry = `[${timestamp}] ${message}${data ? ` | ${JSON.stringify(data, null, 2)}` : ''}`
+    console.log(`[VOICE_DEBUG] ${logEntry}`)
+    setDebugLogs((prev) => [...prev, logEntry])
+  }
 
   // Get audio duration from file
   const getAudioDuration = (file: File): Promise<number> => {
@@ -78,6 +89,11 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
   // Handle file selection
   const handleFileSelect = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return
+    
+    addDebugLog(`Files selected`, {
+      count: files.length,
+      files: Array.from(files).map(f => ({ name: f.name, size: f.size, type: f.type }))
+    })
 
     const validFiles = Array.from(files).filter(file => {
       // Check file size first
@@ -178,6 +194,11 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
     }
 
     setUploadedFiles(prev => [...prev, ...newFiles])
+    
+    addDebugLog(`Files processed and added`, {
+      newFilesCount: newFiles.length,
+      totalFilesCount: uploadedFiles.length + newFiles.length
+    })
     
     toast({
       title: 'Files added',
@@ -290,7 +311,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
         if (onSave) {
           onSave({
             name: voiceName,
-            source: 'voice-clone',
+            source: 'community-voices',
             provider: selectedProvider,
           })
         }
@@ -328,61 +349,118 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
       return
     }
 
-    // For voice clone (native) - Use unified /voices endpoint with strategy="native"
+    // Voice Clone Tab - Simple implementation based on test_voice_clone.py
     if (activeTab === 'voice-clone') {
       if (uploadedFiles.length === 0) {
-        isProcessingRef.current = false
         toast({
           title: 'Files required',
           description: 'Please upload at least one audio file for voice cloning',
           variant: 'destructive',
         })
+        isProcessingRef.current = false
         return
       }
 
-      // Use first file only (simplified - can be extended later)
-      if (uploadedFiles.length > 1) {
-        toast({
-          title: 'Multiple files',
-          description: 'Using first file. Multiple files support coming soon.',
-        })
-      }
-
       setIsCreating(true)
-      console.log('[VOICE_CLONE] Starting voice clone creation', {
-        voiceName,
-        fileName: uploadedFiles[0].file.name,
-        fileSize: uploadedFiles[0].file.size,
-        fileType: uploadedFiles[0].file.type,
-        fileLastModified: uploadedFiles[0].file.lastModified,
-      })
+      setDebugLogs([])
+      setShowDebugPanel(true)
       
+      addDebugLog('=== Starting Voice Cloning Process ===')
+      addDebugLog('✅ Validation passed', {
+        voiceName,
+        filesCount: uploadedFiles.length,
+        activeTab
+      })
+
       try {
-        // Create FormData - Use unified /voices endpoint with strategy="native"
-        const formData = new FormData()
-        formData.append('name', voiceName)
-        formData.append('strategy', 'native')
-        formData.append('files', uploadedFiles[0].file)
-
-        console.log('[VOICE_CLONE] FormData created', {
-          voiceName,
-          formDataKeys: Array.from(formData.keys()),
-          fileInFormData: formData.has('files'),
-          nameInFormData: formData.has('name'),
-          strategyInFormData: formData.has('strategy'),
-        })
-
-        // Use unified /voices endpoint with multipart form-data
-        const result = await apiClient.upload('/voices', formData)
+        // Convert files to base64 - much more reliable than FormData!
+        addDebugLog('📦 Converting files to base64...')
         
-        console.log('[VOICE_CLONE] Upload successful (RAW RESPONSE)', {
-          voiceName,
-          result,
-          fullResult: JSON.stringify(result, null, 2),
+        const convertFileToBase64 = (file: File): Promise<string> => {
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => {
+              const result = reader.result as string
+              // Remove data URL prefix (e.g., "data:audio/mpeg;base64,")
+              const base64 = result.split(',')[1] || result
+              resolve(base64)
+            }
+            reader.onerror = () => reject(new Error('Failed to read file'))
+            reader.readAsDataURL(file)
+          })
+        }
+
+        const filesData = await Promise.all(
+          uploadedFiles.map(async (uploadedFile, index) => {
+            addDebugLog(`  Converting file ${index + 1}...`, {
+              name: uploadedFile.file.name,
+              size: uploadedFile.file.size,
+              type: uploadedFile.file.type
+            })
+            const base64Data = await convertFileToBase64(uploadedFile.file)
+            addDebugLog(`  ✅ File ${index + 1} converted`, {
+              name: uploadedFile.file.name,
+              base64Length: base64Data.length
+            })
+            return {
+              filename: uploadedFile.file.name,
+              data: base64Data,
+              content_type: uploadedFile.file.type || 'audio/mpeg'
+            }
+          })
+        )
+        
+        addDebugLog(`✅ All ${uploadedFiles.length} file(s) converted to base64`)
+
+        // Build JSON payload
+        const payload = {
+          name: voiceName,
+          files: filesData
+        }
+        
+        addDebugLog('📦 JSON payload built', {
+          name: voiceName,
+          filesCount: filesData.length,
+          payloadSize: JSON.stringify(payload).length
         })
+
+        // Get token
+        const token = await getToken()
+        if (!token) {
+          throw new Error('No authentication token available')
+        }
+        addDebugLog('✅ Token retrieved')
+
+        // Call voice clone endpoint with JSON (much more reliable!)
+        const apiUrl = `${API_URL}/voice-clone`
+        addDebugLog('🌐 Calling voice clone endpoint with JSON', { apiUrl })
+
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        })
+
+        if (!response.ok) {
+          const errorText = await response.text()
+          let errorMessage = 'Failed to create voice clone'
+          try {
+            const errorData = JSON.parse(errorText)
+            errorMessage = errorData?.error?.message || errorData?.detail || errorMessage
+          } catch {
+            errorMessage = errorText || response.statusText || errorMessage
+          }
+          throw new Error(errorMessage)
+        }
+
+        const result = await response.json()
+        addDebugLog('✅ Voice clone created successfully!', { result })
 
         toast({
-          title: 'Voice created',
+          title: 'Voice cloned',
           description: `"${voiceName}" has been cloned successfully.`,
         })
 
@@ -395,34 +473,22 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
 
         resetForm()
       } catch (error) {
-        // Log RAW error with full details
         const rawError = error instanceof Error ? error : new Error(String(error))
-        console.error('[VOICE_CLONE] Error creating voice (RAW ERROR)', {
-          voiceName,
-          error: rawError,
-          errorMessage: rawError.message,
-          errorStack: rawError.stack,
-          errorName: rawError.name,
-          errorCause: (rawError as any).cause,
-          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
-          fileName: uploadedFiles[0]?.file?.name,
-          fileSize: uploadedFiles[0]?.file?.size,
+        addDebugLog('❌ Error occurred', {
+          error: rawError.message,
+          stack: rawError.stack
         })
         
         toast({
-          title: 'Error creating voice',
-          description: rawError.message || 'Failed to create voice',
+          title: 'Error cloning voice',
+          description: rawError.message || 'Failed to clone voice',
           variant: 'destructive',
-          duration: 10000, // Show longer for debugging
         })
       } finally {
         setIsCreating(false)
         isProcessingRef.current = false
-        console.log('[VOICE_CLONE] Voice clone creation finished', {
-          voiceName,
-          isCreating: false,
-        })
       }
+      return
     }
   }
 
@@ -440,35 +506,78 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-md w-[95vw] sm:w-full bg-white dark:bg-black border-gray-200 dark:border-gray-900 max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">
-            Add Custom Voice
-          </DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">
+              {activeTab === 'voice-clone' ? 'Clone Voice' : 'Import Voice'}
+            </DialogTitle>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => setShowDebugPanel(!showDebugPanel)}
+              title="Toggle Debug Panel"
+            >
+              <Bug className="h-4 w-4" />
+            </Button>
+          </div>
         </DialogHeader>
 
         <div className="space-y-4 sm:space-y-5 py-2 sm:py-4">
-          {/* Voice Source Tabs */}
-          <div className="flex space-x-1 bg-gray-100 dark:bg-gray-900 p-1 rounded-lg">
+          {/* Tabs: Voice Clone or Import */}
+          <div className="flex gap-2 border-b border-gray-200 dark:border-gray-800">
             <button
               onClick={() => setActiveTab('voice-clone')}
-              className={`flex-1 py-1.5 sm:py-2 px-3 sm:px-4 text-xs sm:text-sm font-medium rounded-md transition-colors ${
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
                 activeTab === 'voice-clone'
-                  ? 'bg-white dark:bg-black text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
               }`}
             >
               Voice Clone
             </button>
             <button
               onClick={() => setActiveTab('import')}
-              className={`flex-1 py-1.5 sm:py-2 px-3 sm:px-4 text-xs sm:text-sm font-medium rounded-md transition-colors ${
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
                 activeTab === 'import'
-                  ? 'bg-white dark:bg-black text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
               }`}
             >
-              Import
+              Import Voice
             </button>
           </div>
+
+          {/* Debug Panel */}
+          {showDebugPanel && (
+            <div className="border-2 border-blue-500 rounded-lg p-3 bg-black text-green-400 font-mono text-xs max-h-64 overflow-y-auto">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-bold">Debug Logs</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    const logsText = debugLogs.join('\n')
+                    navigator.clipboard.writeText(logsText)
+                    addDebugLog('📋 Debug logs copied to clipboard')
+                  }}
+                  className="h-6 text-xs"
+                >
+                  Copy
+                </Button>
+              </div>
+              {debugLogs.length === 0 ? (
+                <div className="text-gray-500">No debug logs yet. Click Save to see logs.</div>
+              ) : (
+                <div className="space-y-1">
+                  {debugLogs.map((log, index) => (
+                    <div key={index} className="whitespace-pre-wrap break-words">
+                      {log}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Voice Name Input */}
           <div className="space-y-1.5 sm:space-y-2">
@@ -481,10 +590,10 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
             />
           </div>
 
-          {/* Upload Audio Clip Section - Only show for voice-clone tab */}
+          {/* File Upload Section - Only for Voice Clone tab */}
           {activeTab === 'voice-clone' && (
             <div className="space-y-1.5 sm:space-y-2">
-              <label className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white">Upload audio clips</label>
+              <label className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white">Upload Audio Files</label>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -498,13 +607,13 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
                 onClick={() => !isCreating && fileInputRef.current?.click()}
-                className={`border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-4 sm:p-6 text-center hover:border-gray-400 dark:hover:border-gray-600 transition-colors ${
+                className={`border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-4 sm:p-6 text-center hover:border-primary dark:hover:border-primary transition-colors ${
                   isCreating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                 }`}
               >
                 <div className="flex flex-col items-center space-y-2 sm:space-y-3">
-                  <div className="p-2 sm:p-3 bg-gray-100 dark:bg-gray-900 rounded-full">
-                    <Upload className="h-5 w-5 sm:h-6 sm:w-6 text-gray-600 dark:text-gray-400" />
+                  <div className="p-2 sm:p-3 bg-primary/10 dark:bg-primary/20 rounded-full">
+                    <Upload className="h-5 w-5 sm:h-6 sm:w-6 text-primary" />
                   </div>
                   <div>
                     <p className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white">
@@ -530,16 +639,9 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
                           {uploadedFile.file.name}
                         </p>
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {Math.round(uploadedFile.duration)}s
+                          {Math.round(uploadedFile.duration)}s • {(uploadedFile.file.size / 1024 / 1024).toFixed(2)} MB
                         </p>
                       </div>
-                      <Input
-                        type="text"
-                        placeholder="Sample text (optional)"
-                        value={uploadedFile.text}
-                        onChange={(e) => updateSampleText(index, e.target.value)}
-                        className="flex-1 text-xs h-8"
-                      />
                       <Button
                         variant="ghost"
                         size="sm"
@@ -657,7 +759,7 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
               className="mt-0.5 sm:mt-1 h-4 w-4 text-primary border-gray-300 dark:border-gray-700 rounded focus:ring-primary dark:focus:ring-primary flex-shrink-0"
             />
             <label htmlFor="agreement" className="text-xs sm:text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
-              I hereby confirm that I have all necessary rights or consents to upload and clone these voice samples and that I will not use the platform-generated content for any illegal, fraudulent, or harmful purpose.
+              I hereby confirm that I have all necessary rights or consents to {activeTab === 'voice-clone' ? 'clone' : 'import'} this voice and that I will not use the platform-generated content for any illegal, fraudulent, or harmful purpose.
             </label>
           </div>
 
@@ -684,10 +786,10 @@ export function AddCustomVoiceModal({ isOpen, onClose, onSave }: AddCustomVoiceM
               {isCreating ? (
                 <>
                   {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Creating...
+                  {activeTab === 'voice-clone' ? 'Cloning...' : 'Creating...'}
                 </>
               ) : (
-                'Save'
+                activeTab === 'voice-clone' ? 'Clone Voice' : 'Import Voice'
               )}
             </Button>
           </div>

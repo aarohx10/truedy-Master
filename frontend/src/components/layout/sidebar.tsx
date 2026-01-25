@@ -243,8 +243,8 @@ export function Sidebar() {
                   {[
                     { title: 'Analytics', href: '/analytics', icon: 'BarChart3' },
                     { title: 'Agents', href: '/agents', icon: 'Wand2' },
-                    { title: 'Voice Cloning', href: '/voice-cloning', icon: 'Mic2' },
-                    { title: 'Knowledge Base', href: '/rag', icon: 'BookOpen' },
+                    { title: 'Voices', href: '/voice-cloning', icon: 'Mic2' },
+                    { title: 'Knowledge Base', href: '/knowledge-base', icon: 'BookOpen' },
                     { title: 'Tools', href: '/tools', icon: 'Wrench' },
                     { title: 'Contacts', href: '/contacts', icon: 'Users' },
                     { title: 'Calls', href: '/calls', icon: 'Phone' },

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Search as SearchIcon, X, Bot, Megaphone, Phone, Users, BarChart3, Clock, ArrowRight, Mic, History, Trash2 } from 'lucide-react'
+import { Search as SearchIcon, X, Megaphone, Phone, Users, BarChart3, Clock, ArrowRight, Mic, History, Trash2, Wand2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSearch, useSearchAnalytics } from '@/hooks/use-search'
 
@@ -11,7 +11,7 @@ interface SearchResult {
   id: string
   title: string
   description: string
-  type: 'agent' | 'campaign' | 'contact' | 'call' | 'analytics' | 'voice-clone'
+  type: 'campaign' | 'contact' | 'call' | 'analytics' | 'voice-clone' | 'agent'
   icon: React.ReactNode
   href: string
   metadata?: {
@@ -33,8 +33,8 @@ const mockSearchData: SearchResult[] = []
 
 // --- SEARCH CATEGORIES ---
 const searchCategories = {
-  agent: { label: 'Agents', color: 'text-primary dark:text-primary' },
   campaign: { label: 'Campaigns', color: 'text-purple-600 dark:text-purple-400' },
+  agent: { label: 'Agents', color: 'text-blue-600 dark:text-blue-400' },
   contact: { label: 'Contacts', color: 'text-green-600 dark:text-green-400' },
   call: { label: 'Calls', color: 'text-orange-600 dark:text-orange-400' },
   'voice-clone': { label: 'Voice Clones', color: 'text-pink-600 dark:text-pink-400' },
@@ -47,7 +47,7 @@ const SearchResultItem: React.FC<{ result: SearchResult; onSelect: () => void }>
     onClick={onSelect}
     className="flex items-center gap-4 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer transition-colors group"
   >
-    <div className={cn("p-2 rounded-md", `bg-${result.type === 'agent' ? 'blue' : result.type === 'campaign' ? 'purple' : result.type === 'contact' ? 'green' : result.type === 'call' ? 'orange' : result.type === 'voice-clone' ? 'pink' : 'indigo'}-100 dark:bg-${result.type === 'agent' ? 'blue' : result.type === 'campaign' ? 'purple' : result.type === 'contact' ? 'green' : result.type === 'call' ? 'orange' : result.type === 'voice-clone' ? 'pink' : 'indigo'}-950`)}>
+    <div className={cn("p-2 rounded-md", `bg-${result.type === 'campaign' ? 'purple' : result.type === 'contact' ? 'green' : result.type === 'call' ? 'orange' : result.type === 'voice-clone' ? 'pink' : 'indigo'}-100 dark:bg-${result.type === 'campaign' ? 'purple' : result.type === 'contact' ? 'green' : result.type === 'call' ? 'orange' : result.type === 'voice-clone' ? 'pink' : 'indigo'}-950`)}>
       <div className={searchCategories[result.type].color}>
         {result.icon}
       </div>
@@ -197,7 +197,7 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
               <input
                 ref={inputRef}
                 type="text"
-                placeholder="Search agents, campaigns..."
+                placeholder="Search agents, campaigns, contacts, calls..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="flex-1 bg-transparent text-base sm:text-lg text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none"
@@ -245,13 +245,13 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
                 <div className="p-8 text-center text-gray-600 dark:text-gray-400 bg-white dark:bg-black">
                   <SearchIcon className="w-12 h-12 mx-auto mb-4 opacity-50 text-gray-400 dark:text-gray-500" />
                   <p className="text-gray-900 dark:text-white">No results found for &quot;{searchTerm}&quot;</p>
-                  <p className="text-sm mt-2">Try searching for agents, campaigns, contacts, or calls</p>
+                  <p className="text-sm mt-2">Try searching for campaigns, contacts, or calls</p>
                 </div>
               ) : !searchTerm.trim() && recentSearches.length === 0 ? (
                 <div className="p-8 text-center text-gray-600 dark:text-gray-400 bg-white dark:bg-black">
                   <SearchIcon className="w-12 h-12 mx-auto mb-4 opacity-50 text-gray-400 dark:text-gray-500" />
                   <p className="text-gray-900 dark:text-white">Start typing to search across your platform</p>
-                  <p className="text-sm mt-2">Search agents, campaigns, contacts, calls, and more</p>
+                  <p className="text-sm mt-2">Search campaigns, contacts, calls, and more</p>
                 </div>
               ) : filteredResults.length > 0 ? (
                 <div className="p-2 bg-white dark:bg-black">
