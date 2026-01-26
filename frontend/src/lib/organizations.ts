@@ -1,30 +1,43 @@
 'use client'
 
 import { useOrganization, useOrganizationList, useUser } from '@clerk/nextjs'
-import { apiClient } from './api'
+import { useEffect, useRef } from 'react'
+import { apiClient, endpoints } from './api'
+import { authManager } from './auth-manager'
 
 /**
  * Hook to sync Clerk organization with database client
  * This ensures that when a user joins/creates an organization in Clerk,
  * the corresponding client is created/updated in the database
+ * 
+ * ENHANCED: Automatically triggers /auth/me when organization switches
  */
 export function useOrganizationSync() {
   const { organization } = useOrganization()
   const { user } = useUser()
+  const lastOrgIdRef = useRef<string | null>(null)
 
   // Sync organization with database when organization changes
   const syncOrganization = async () => {
     if (!organization || !user) return
 
     try {
-      // Call /auth/me endpoint which will create/update client if needed
-      const response = await apiClient.get('/auth/me')
+      // Call /auth/me endpoint which will:
+      // 1. Check Clerk org metadata for client_id
+      // 2. Create/update client if needed
+      // 3. Ensure user is linked to correct client_id
+      const response = await apiClient.get(endpoints.auth.me)
+      // Response structure: { data: UserResponse, meta: {...} }
+      // UserResponse has: { id, client_id, email, role, ... }
       const userData = response.data as any
+      const clientId = userData?.client_id || userData?.data?.client_id
 
-      if (userData?.client_id) {
-        // Update organization metadata with client_id for future lookups
-        // This is done via webhook in production, but we can also do it here
-        console.log('Organization synced with client:', userData.client_id)
+      if (clientId) {
+        // Update authManager with the client_id
+        authManager.setClientId(clientId)
+        console.log('[ORGANIZATIONS] Organization synced with client:', clientId)
+      } else {
+        console.warn('[ORGANIZATIONS] No client_id found in /auth/me response')
       }
     } catch (error) {
       const rawError = error instanceof Error ? error : new Error(String(error))
@@ -39,6 +52,33 @@ export function useOrganizationSync() {
       })
     }
   }
+
+  // Automatically trigger sync when organization changes
+  useEffect(() => {
+    const currentOrgId = organization?.id || null
+    
+    // Only sync if organization actually changed
+    if (currentOrgId && currentOrgId !== lastOrgIdRef.current) {
+      console.log('[ORGANIZATIONS] Organization changed, triggering sync:', {
+        previousOrgId: lastOrgIdRef.current,
+        newOrgId: currentOrgId
+      })
+      lastOrgIdRef.current = currentOrgId
+      
+      // Trigger /auth/me to refresh client_id and sync with new organization
+      // This ensures the entire dashboard "flips" to the new organization's data
+      syncOrganization().then(() => {
+        // Force a page refresh to ensure all queries use the new client_id
+        // This is more reliable than invalidating all queries
+        console.log('[ORGANIZATIONS] Organization sync complete, refreshing page to load new workspace data')
+        window.location.reload()
+      }).catch((error) => {
+        console.error('[ORGANIZATIONS] Failed to sync organization:', error)
+        // Still refresh to prevent stale data
+        window.location.reload()
+      })
+    }
+  }, [organization?.id, user?.id])
 
   return { syncOrganization, organization }
 }

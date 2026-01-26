@@ -133,10 +133,11 @@ export function useAuthClient() {
   const [clientId, setClientId] = useState<string | null>(authManager.getClientId())
   const [isLoading, setIsLoading] = useState(true)
   
-  // Refs to prevent race conditions
-  const isSettingUpRef = useRef(false)
-  const setupIdRef = useRef(0)
-  const wasSignedInRef = useRef(false)
+      // Refs to prevent race conditions
+      const isSettingUpRef = useRef(false)
+      const setupIdRef = useRef(0)
+      const wasSignedInRef = useRef(false)
+      const hasFetchedClientIdRef = useRef(false)
   
   // Memoized getToken wrapper to pass to authManager
   const getClerkToken = useCallback(async (): Promise<string | null> => {
@@ -273,6 +274,7 @@ export function useAuthClient() {
   // Main auth setup effect
   useEffect(() => {
     const currentSetupId = ++setupIdRef.current
+    let isMounted = true // Track if component is still mounted
     
     debugLogger.logAuth('AUTH_STATE', 'Auth state check', {
       userLoaded,
@@ -285,7 +287,9 @@ export function useAuthClient() {
     if (!userLoaded) {
       setIsLoading(true)
       debugLogger.logAuth('AUTH_STATE', 'User not loaded yet, waiting...')
-      return
+      return () => {
+        isMounted = false
+      }
     }
 
     // Track previous signed-in state
@@ -300,14 +304,19 @@ export function useAuthClient() {
         authManager.clearAuth()
         apiClient.clearToken()
         setClientId(null)
-        hasFetchedClientIdRef.current = false
+        // Reset the ref - safe to access since we're in the hook's scope
+        if (isMounted) {
+          hasFetchedClientIdRef.current = false
+        }
       } else if (!wasSignedIn) {
         debugLogger.logAuth('AUTH_STATE', 'User not authenticated')
       } else {
         debugLogger.logAuth('AUTH_STATE', 'Auth state temporarily false, may be refreshing')
       }
       setIsLoading(false)
-      return
+      return () => {
+        isMounted = false
+      }
     }
 
     // Prevent concurrent setup calls
@@ -318,9 +327,13 @@ export function useAuthClient() {
 
     // User is authenticated - set up token and client_id
     const setupAuth = async () => {
-      // Check if this setup is still current
-      if (currentSetupId !== setupIdRef.current) {
-        debugLogger.logAuth('AUTH_SETUP', 'Stale setup, aborting', { currentSetupId, latestId: setupIdRef.current })
+      // Check if component is still mounted and setup is still current
+      if (!isMounted || currentSetupId !== setupIdRef.current) {
+        debugLogger.logAuth('AUTH_SETUP', 'Stale setup or unmounted, aborting', { 
+          currentSetupId, 
+          latestId: setupIdRef.current,
+          isMounted 
+        })
         return
       }
       
@@ -358,7 +371,9 @@ export function useAuthClient() {
               attempt: 'retry',
             })
             console.error('[useAuthClient] Failed to get token after retry:', retryError)
-            setIsLoading(false)
+            if (isMounted) {
+              setIsLoading(false)
+            }
             isSettingUpRef.current = false
             return
           }
@@ -367,14 +382,20 @@ export function useAuthClient() {
         if (!token) {
           debugLogger.logAuth('TOKEN_GET', 'Token is null, user may need to re-authenticate')
           console.warn('[useAuthClient] Clerk token is null')
-          setIsLoading(false)
+          if (isMounted) {
+            setIsLoading(false)
+          }
           isSettingUpRef.current = false
           return
         }
         
-        // Check if still current after async operation
-        if (currentSetupId !== setupIdRef.current) {
-          debugLogger.logAuth('AUTH_SETUP', 'Setup became stale, aborting')
+        // Check if component is still mounted and setup is still current
+        if (!isMounted || currentSetupId !== setupIdRef.current) {
+          debugLogger.logAuth('AUTH_SETUP', 'Setup became stale or unmounted, aborting', {
+            currentSetupId,
+            latestId: setupIdRef.current,
+            isMounted
+          })
           isSettingUpRef.current = false
           return
         }
@@ -405,38 +426,59 @@ export function useAuthClient() {
           // Use global fetch lock to prevent duplicate calls
           // Pass organization.id to invalidate cache if org changes
           extractedClientId = await fetchClientIdFromAPI(token, organization?.id)
+          if (extractedClientId && isMounted) {
+            hasFetchedClientIdRef.current = true
+          }
+        } else if (isMounted) {
+          // Client ID came from org metadata, mark as fetched
+          hasFetchedClientIdRef.current = true
         }
         
-        // Check if still current after async operations
-        if (currentSetupId !== setupIdRef.current) {
-          debugLogger.logAuth('AUTH_SETUP', 'Setup became stale after fetching clientId, aborting')
+        // Check if component is still mounted and setup is still current after async operations
+        if (!isMounted || currentSetupId !== setupIdRef.current) {
+          debugLogger.logAuth('AUTH_SETUP', 'Setup became stale or unmounted after fetching clientId, aborting', {
+            currentSetupId,
+            latestId: setupIdRef.current,
+            isMounted
+          })
           isSettingUpRef.current = false
           return
         }
 
-        // Set final auth state
-        authManager.setAuth(token, extractedClientId)
-        apiClient.setToken(token)
-        if (extractedClientId) {
-          apiClient.setClientId(extractedClientId)
+        // Set final auth state (only if still mounted)
+        if (isMounted) {
+          authManager.setAuth(token, extractedClientId)
+          apiClient.setToken(token)
+          if (extractedClientId) {
+            apiClient.setClientId(extractedClientId)
+          }
+          setClientId(extractedClientId)
+          setIsLoading(false)
+          
+          debugLogger.logAuth('AUTH_SETUP', 'Auth setup complete', {
+            hasToken: true,
+            clientId: extractedClientId,
+            setupId: currentSetupId,
+          })
         }
-        setClientId(extractedClientId)
-        setIsLoading(false)
-        
-        debugLogger.logAuth('AUTH_SETUP', 'Auth setup complete', {
-          hasToken: true,
-          clientId: extractedClientId,
-          setupId: currentSetupId,
-        })
       } catch (error) {
         console.error('[useAuthClient] Error setting up auth:', error)
-        setIsLoading(false)
+        if (isMounted) {
+          setIsLoading(false)
+        }
       } finally {
-        isSettingUpRef.current = false
+        if (isMounted) {
+          isSettingUpRef.current = false
+        }
       }
     }
 
     setupAuth()
+    
+    // Cleanup function to mark component as unmounted
+    return () => {
+      isMounted = false
+    }
   }, [user, userLoaded, isSignedIn, getToken, organization])
 
   // Subscribe to organization metadata changes for real-time updates

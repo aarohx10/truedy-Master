@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useOrganization, useOrganizationList, useUser } from '@clerk/nextjs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { Loader2 } from 'lucide-react'
+import { apiClient, endpoints } from '@/lib/api'
 
 interface InviteMemberModalProps {
   isOpen: boolean
@@ -37,12 +38,60 @@ export function InviteMemberModal({ isOpen, onClose, onSuccess }: InviteMemberMo
   const [role, setRole] = useState<'org:admin' | 'org:member'>('org:member')
   const [isInviting, setIsInviting] = useState(false)
   const [isCreatingOrg, setIsCreatingOrg] = useState(false)
+  const [canInvite, setCanInvite] = useState(false)
+  const [checkingPermission, setCheckingPermission] = useState(true)
+
+  // Check if current user has client_admin role in Supabase (not just Clerk)
+  useEffect(() => {
+    const checkInvitePermission = async () => {
+      if (!isOpen) return
+      
+      setCheckingPermission(true)
+      try {
+        const response = await apiClient.get(endpoints.auth.me)
+        // Response structure: { data: UserResponse, meta: {...} }
+        // UserResponse has: { id, client_id, email, role, ... }
+        const userData = response.data as any
+        const userRole = userData?.role || userData?.data?.role
+        
+        // Only client_admin can invite members (enforced in Supabase, not just Clerk)
+        const hasPermission = userRole === 'client_admin'
+        setCanInvite(hasPermission)
+        
+        if (!hasPermission && userRole) {
+          // Only show error if we got a role but it's not admin
+          // Don't show error if still loading/checking
+          console.warn('[INVITE_MEMBER_MODAL] User does not have client_admin role:', userRole)
+        }
+      } catch (error) {
+        console.error('[INVITE_MEMBER_MODAL] Failed to check permissions:', error)
+        setCanInvite(false)
+        // Don't show toast on every check - only show if user tries to invite
+      } finally {
+        setCheckingPermission(false)
+      }
+    }
+    
+    if (isOpen) {
+      checkInvitePermission()
+    }
+  }, [isOpen])
 
   const handleInvite = async () => {
     if (!email.trim()) {
       toast({
         title: 'Validation error',
         description: 'Email address is required',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Verify permission before inviting
+    if (!canInvite) {
+      toast({
+        title: 'Permission denied',
+        description: 'Only workspace admins can invite team members.',
         variant: 'destructive',
       })
       return
@@ -66,7 +115,7 @@ export function InviteMemberModal({ isOpen, onClose, onSuccess }: InviteMemberMo
                                      errorMessage.includes('organizations feature')
         
         console.error('[INVITE_MEMBER_MODAL] Error creating workspace (RAW ERROR)', {
-          workspaceName,
+          orgName,
           error: rawError,
           errorMessage: rawError.message,
           errorStack: rawError.stack,
@@ -146,6 +195,11 @@ export function InviteMemberModal({ isOpen, onClose, onSuccess }: InviteMemberMo
           <DialogTitle className="text-lg text-gray-900 dark:text-white">Invite Team Member</DialogTitle>
           <DialogDescription className="text-sm text-gray-600 dark:text-gray-400">
             Send an invitation to join your workspace. They will receive an email with instructions.
+            {!canInvite && !checkingPermission && (
+              <span className="block mt-2 text-red-500 dark:text-red-400">
+                Only workspace admins can invite team members.
+              </span>
+            )}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
@@ -187,7 +241,7 @@ export function InviteMemberModal({ isOpen, onClose, onSuccess }: InviteMemberMo
           </Button>
           <Button
             onClick={handleInvite}
-            disabled={isInviting || isCreatingOrg || !email.trim()}
+            disabled={isInviting || isCreatingOrg || !email.trim() || !canInvite || checkingPermission}
             className="bg-primary hover:bg-primary/90 text-white"
           >
             {isCreatingOrg ? (

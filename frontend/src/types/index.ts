@@ -330,6 +330,12 @@ export interface Contact {
   last_name?: string;
   email?: string;
   phone_number: string;
+  // New standard fields
+  company_name?: string;
+  industry?: string;
+  location?: string;
+  pin_code?: string;
+  keywords?: string[];
   metadata?: Record<string, any>;
   created_at: string;
   updated_at: string;
@@ -355,6 +361,12 @@ export interface CreateContactData {
   last_name?: string;
   email?: string;
   phone_number: string;
+  // New standard fields
+  company_name?: string;
+  industry?: string;
+  location?: string;
+  pin_code?: string;
+  keywords?: string[];
   metadata?: Record<string, any>;
 }
 
@@ -364,13 +376,24 @@ export interface UpdateContactData {
   last_name?: string;
   email?: string;
   phone_number?: string;
+  // New standard fields
+  company_name?: string;
+  industry?: string;
+  location?: string;
+  pin_code?: string;
+  keywords?: string[];
   metadata?: Record<string, any>;
 }
 
 export interface ContactImportRequest {
   folder_id: string;
-  file_key?: string;
-  contacts?: CreateContactData[];
+  file_key?: string; // Legacy
+  contacts?: CreateContactData[]; // Legacy
+  // New: Base64 CSV file upload
+  base64_file?: string;
+  filename?: string;
+  // New: Mapping configuration for dynamic field mapping
+  mapping_config?: Record<string, string>; // Format: {'csv_header': 'standard_field'}
 }
 
 export interface ContactImportResponse {

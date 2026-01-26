@@ -34,10 +34,19 @@ async def list_contact_folders(
             logger.error(f"[CONTACTS] [LIST_FOLDERS] No client_id in current_user: {current_user}")
             raise ValidationError("client_id is required")
         
-        # Convert client_id to string to ensure type consistency
-        client_id = str(client_id)
+        # Step 1: Request Validation - Ensure x_client_id matches current_user client_id to prevent cross-tenant leaks
+        if x_client_id and x_client_id != str(client_id):
+            logger.warning(f"[CONTACTS] [LIST_FOLDERS] client_id mismatch: header={x_client_id}, token={client_id}")
+            # For non-agency-admin users, enforce strict matching
+            if current_user.get("role") != "agency_admin":
+                raise ValidationError("client_id mismatch between header and token")
         
-        logger.info(f"[CONTACTS] [LIST_FOLDERS] Listing folders for client_id: {client_id}")
+        # Step 1: Enhanced Logging - Log the type of client_id being used
+        logger.info(f"[CONTACTS] [LIST_FOLDERS] Listing folders for client_id: {client_id} (type: {type(client_id).__name__})")
+        logger.info(f"[CONTACTS] [LIST_FOLDERS] x_client_id header: {x_client_id} (type: {type(x_client_id).__name__ if x_client_id else 'None'})")
+        
+        # DO NOT cast to string - let the database handle UUID type matching
+        # The test script works without string casting, so we should match that behavior
         
         # Use DatabaseAdminService to bypass RLS (same as test script)
         # This matches the test script approach that works
@@ -90,14 +99,22 @@ async def list_contact_folders(
         
         logger.info(f"[CONTACTS] [LIST_FOLDERS] Returning {len(folders_with_counts)} folder(s)")
         
-        # Build response - same format as other endpoints
-        return {
-            "data": folders_with_counts,
-            "meta": ResponseMeta(
-                request_id=str(uuid.uuid4()),
-                ts=datetime.utcnow(),
-            ),
+        # Step 1: Explicit Data Keys - Ensure exact response format
+        response_payload = {
+            "data": folders_with_counts,  # This must be a list
+            "meta": {
+                "request_id": str(uuid.uuid4()),
+                "ts": datetime.utcnow().isoformat()
+            }
         }
+        
+        # Step 1: Log the Raw Payload - Verify structure before return
+        logger.info(f"[CONTACTS] [LIST_FOLDERS] FINAL_RESPONSE_PAYLOAD (first item): {json.dumps(folders_with_counts[:1] if folders_with_counts else [], indent=2, default=str)}")
+        logger.info(f"[CONTACTS] [LIST_FOLDERS] Response data type: {type(folders_with_counts).__name__}, length: {len(folders_with_counts)}")
+        logger.info(f"[CONTACTS] [LIST_FOLDERS] Full response structure: {json.dumps({'data_count': len(response_payload['data']), 'has_meta': 'meta' in response_payload, 'meta_keys': list(response_payload['meta'].keys())}, indent=2)}")
+        logger.info(f"[CONTACTS] [LIST_FOLDERS] Complete response payload: {json.dumps(response_payload, indent=2, default=str)}")
+        
+        return response_payload
         
     except Exception as e:
         import traceback

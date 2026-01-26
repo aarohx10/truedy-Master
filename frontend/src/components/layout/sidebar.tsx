@@ -8,8 +8,7 @@ import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/stores/app-store'
 import { useState, useTransition } from 'react'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
-import { useUser } from '@clerk/nextjs'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { useUser, UserButton, OrganizationSwitcher } from '@clerk/nextjs'
 import {
   Home,
   BarChart3,
@@ -167,6 +166,22 @@ export function Sidebar() {
             )}
           </div>
 
+          {/* Workspace Switcher - Top of Sidebar */}
+          {(!sidebarCollapsed || mobileMenuOpen) && (
+            <div className="px-6 py-3 border-b border-gray-100 dark:border-gray-900">
+              <OrganizationSwitcher
+                appearance={{
+                  elements: {
+                    organizationSwitcherTrigger: "w-full justify-start px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900 rounded-lg transition-colors",
+                    organizationPreview: "text-gray-900 dark:text-white",
+                  },
+                }}
+                afterSelectOrganizationUrl="/dashboard"
+                afterCreateOrganizationUrl="/dashboard"
+              />
+            </div>
+          )}
+
           {/* Navigation */}
           <nav className={cn(
             "flex-1 overflow-y-auto scrollbar-hide",
@@ -299,25 +314,19 @@ export function Sidebar() {
                 <ThemeToggle />
               </div>
 
-              {/* User Profile Card */}
-              {user && (
-                <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
-                  <Avatar className="h-8 w-8">
-                    <AvatarImage src={user.imageUrl} alt={user.fullName || user.emailAddresses[0]?.emailAddress || 'User'} />
-                    <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                      {user.fullName?.charAt(0) || user.emailAddresses[0]?.emailAddress?.charAt(0) || 'U'}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                      {user.fullName || user.emailAddresses[0]?.emailAddress || 'User'}
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-500 truncate">
-                      {user.emailAddresses[0]?.emailAddress}
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* Clerk UserButton - Bottom Left */}
+              <div className="flex items-center">
+                <UserButton
+                  appearance={{
+                    elements: {
+                      userButtonTrigger: "w-full justify-start px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900 rounded-lg transition-colors",
+                      userButtonPopoverCard: "bg-white dark:bg-black border-gray-200 dark:border-gray-900",
+                    },
+                  }}
+                  showName={true}
+                  afterSignOutUrl="/"
+                />
+              </div>
             </div>
           )}
 
@@ -335,14 +344,16 @@ export function Sidebar() {
               
               <ThemeToggle />
 
-              {user && (
-                <Avatar className="h-10 w-10">
-                  <AvatarImage src={user.imageUrl} alt={user.fullName || 'User'} />
-                  <AvatarFallback className="bg-primary/10 text-primary">
-                    {user.fullName?.charAt(0) || user.emailAddresses[0]?.emailAddress?.charAt(0) || 'U'}
-                  </AvatarFallback>
-                </Avatar>
-              )}
+              {/* Clerk UserButton - Collapsed */}
+              <UserButton
+                appearance={{
+                  elements: {
+                    userButtonTrigger: "h-10 w-10 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors",
+                  },
+                }}
+                showName={false}
+                afterSignOutUrl="/"
+              />
             </div>
           )}
         </div>

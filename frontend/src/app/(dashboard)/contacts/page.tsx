@@ -22,6 +22,14 @@ export default function ContactsPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
 
+  // Step 4: Direct Prop Check - Log folders in component
+  console.log('[COMPONENT] FOLDERS_IN_COMPONENT:', folders)
+  console.log('[COMPONENT] folders type:', typeof folders)
+  console.log('[COMPONENT] folders isArray:', Array.isArray(folders))
+  console.log('[COMPONENT] folders length:', folders?.length)
+  console.log('[COMPONENT] isLoading:', isLoading)
+  console.log('[COMPONENT] error:', error)
+
   const handleCreateFolder = () => {
     setFolderDialogOpen(true)
   }
@@ -94,6 +102,11 @@ export default function ContactsPage() {
     folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     folder.description?.toLowerCase().includes(searchQuery.toLowerCase())
   )
+
+  // Step 4: Log filtered results
+  console.log('[COMPONENT] filteredFolders:', filteredFolders)
+  console.log('[COMPONENT] filteredFolders length:', filteredFolders.length)
+  console.log('[COMPONENT] searchQuery:', searchQuery)
 
   return (
     <AppLayout>

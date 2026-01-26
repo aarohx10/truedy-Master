@@ -123,6 +123,11 @@ class ApiClient {
     options: RequestInit = {},
     retryCount: number = 0
   ): Promise<BackendResponse<T>> {
+    // Task 4: Hardening the API Handshake - Handle large JSON payloads (up to 5MB)
+    // For import endpoints, use AbortController with extended timeout
+    const isImportEndpoint = endpoint.includes('/import') || endpoint.includes('/contacts/import')
+    const timeout = isImportEndpoint ? 120000 : 30000 // 2 minutes for imports, 30s for others
+    
     const method = options.method || 'GET'
     const url = `${this.baseUrl}${endpoint}`
     const startTime = performance.now()
@@ -154,6 +159,8 @@ class ApiClient {
     // Add x-client-id header (required by backend for non-agency-admin users)
     if (clientId) {
       headers['x-client-id'] = clientId
+      // Step 3: Header Logging - Log x-client-id for debugging
+      console.log('[API] Outgoing x-client-id:', clientId)
     }
 
     // Add idempotency key for POST/PATCH/PUT requests
@@ -169,9 +176,16 @@ class ApiClient {
         headers,
       })
     } catch (error) {
-      // Handle network errors (CORS, connection refused, etc.)
+      clearTimeout(timeoutId)
+      
+      // Handle network errors (CORS, connection refused, timeout, etc.)
       const rawError = error instanceof Error ? error : new Error(String(error))
       const errorMessage = rawError.message || 'Network error'
+      
+      // Check if it's a timeout error
+      if (rawError.name === 'AbortError' || errorMessage.includes('aborted')) {
+        throw new Error(`Request timeout after ${timeout / 1000}s. ${isImportEndpoint ? 'Large file imports may take longer. Please try again or use a smaller file.' : ''}`)
+      }
       
       // Log RAW network error
       console.error('[API_REQUEST] Network error (RAW)', {
@@ -244,6 +258,25 @@ class ApiClient {
 
     const durationMs = Math.round(performance.now() - startTime)
     const responseData = await response.json().catch(() => ({})) as BackendResponse<T> | BackendError
+
+    // Step 3: Empty Data Protection - Check if response is 200 but data is null/empty
+    if (response.ok && response.status === 200) {
+      // Step 3: Global Response Logger - Log every 200 OK response
+      console.log(`[API SUCCESS] ${method} ${endpoint}:`, responseData)
+      
+      if (!responseData || (responseData && 'data' in responseData && (responseData.data === null || responseData.data === undefined))) {
+        const errorMessage = `Backend returned 200 but data payload is empty for ${endpoint}`
+        console.error('[API] Empty data payload detected:', {
+          endpoint,
+          url,
+          status: response.status,
+          responseData,
+          clientId: clientId || 'missing',
+        })
+        // Don't throw here - let the calling code handle empty arrays
+        // But log it clearly for debugging
+      }
+    }
 
     debugLogger.logResponse(method, endpoint, response.status, durationMs, {
       ok: response.ok,

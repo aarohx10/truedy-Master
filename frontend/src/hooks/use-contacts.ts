@@ -21,12 +21,28 @@ export function useContactFolders() {
   return useQuery<ContactFolder[]>({
     queryKey: ['contact-folders', clientId],
     queryFn: async () => {
-      const response = await apiClient.get<{ data: ContactFolder[] }>(endpoints.contacts.listFolders)
-      return response.data.data || []
+      // Step 2: Bypass Level Check - Log raw response for debugging
+      const response = await apiClient.get<any>(endpoints.contacts.listFolders)
+      console.log('[HOOK] RAW_FOLDER_RESPONSE:', response)
+      console.log('[HOOK] response.data:', response.data)
+      console.log('[HOOK] response.data?.data:', response.data?.data)
+      console.log('[HOOK] response.data type:', typeof response.data)
+      console.log('[HOOK] response.data isArray:', Array.isArray(response.data))
+      
+      // Ensure we are grabbing the correct nested 'data'
+      const folderData = response.data?.data || response.data || []
+      const finalData = Array.isArray(folderData) ? folderData : []
+      
+      console.log('[HOOK] Final folderData:', finalData)
+      console.log('[HOOK] Final folderData length:', finalData.length)
+      
+      return finalData
     },
-    enabled: !authLoading && isAuthReady && authManager.hasToken(),
-    staleTime: 1000 * 60,
-    gcTime: 1000 * 60 * 10,
+    // Step 2: Strict Query Enabling - Require clientId to prevent fetching before auth is ready
+    enabled: !authLoading && isAuthReady && !!clientId && authManager.hasToken(),
+    // Step 2: Remove Stale Cache - Kill any "empty" persistent caches
+    staleTime: 0,
+    gcTime: 0,
   })
 }
 
@@ -43,30 +59,63 @@ export function useCreateContactFolder() {
       return response.data.data
     },
     onSuccess: () => {
-      // Invalidate and refetch all contact-folders queries to refresh the list
-      queryClient.invalidateQueries({ queryKey: ['contact-folders'] })
-      queryClient.refetchQueries({ queryKey: ['contact-folders', clientId] })
+      // Step 2: Invalidation Logic - Use exact queryKey pattern to force immediate refresh
+      if (clientId) {
+        queryClient.invalidateQueries({ queryKey: ['contact-folders', clientId] })
+        queryClient.refetchQueries({ queryKey: ['contact-folders', clientId] })
+      } else {
+        // Fallback: invalidate all if clientId not available
+        queryClient.invalidateQueries({ queryKey: ['contact-folders'] })
+      }
     },
   })
 }
 
 // Contacts
 
-export function useContacts(folderId?: string) {
+export function useContacts(folderId?: string, page: number = 1, limit: number = 50) {
   const { clientId, isLoading: authLoading } = useAuthClient()
   const isAuthReady = useAuthReady()
   
-  return useQuery<Contact[]>({
-    queryKey: ['contacts', clientId, folderId],
+  return useQuery<{ contacts: Contact[]; pagination: { total: number; pages: number; page: number; limit: number } }>({
+    queryKey: ['contacts', clientId, folderId, page, limit],
     queryFn: async () => {
-      const response = await apiClient.get<{ data: Contact[] }>(
-        endpoints.contacts.listContacts(folderId)
-      )
-      return response.data.data || []
+      if (!folderId) return { contacts: [], pagination: { total: 0, pages: 0, page: 1, limit } }
+      
+      // Construct URL with pagination params
+      const baseUrl = endpoints.contacts.listContacts(folderId)
+      const separator = baseUrl.includes('?') ? '&' : '?'
+      const url = `${baseUrl}${separator}page=${page}&limit=${limit}`
+      
+      // Backend returns: { data: Contact[], meta: {...}, pagination: {...} }
+      const response = await apiClient.get<Contact[]>(url) as any
+      
+      // Extract contacts - response.data should be Contact[] array
+      let contacts: Contact[] = []
+      let pagination: { total: number; pages: number; page: number; limit: number } = {
+        total: 0,
+        pages: 0,
+        page: 1,
+        limit
+      }
+      
+      if (Array.isArray(response.data)) {
+        contacts = response.data
+        pagination = response.pagination || {
+          total: contacts.length,
+          pages: 1,
+          page: 1,
+          limit
+        }
+      } else {
+        console.error('[HOOK] [CONTACTS] Unexpected response.data type:', typeof response.data, response)
+      }
+      
+      return { contacts, pagination }
     },
-    enabled: !authLoading && isAuthReady && authManager.hasToken(),
-    staleTime: 1000 * 60,
-    gcTime: 1000 * 60 * 10,
+    enabled: !authLoading && isAuthReady && authManager.hasToken() && !!folderId,
+    staleTime: 1000 * 60, // Cache for 1 minute
+    gcTime: 1000 * 60 * 5,
   })
 }
 
@@ -119,6 +168,7 @@ export function useDeleteContact() {
     },
     onSuccess: (_, variables) => {
       if (variables.folderId) {
+        // Invalidate all pages for this folder
         queryClient.invalidateQueries({ queryKey: ['contacts', clientId, variables.folderId] })
       } else {
         queryClient.invalidateQueries({ queryKey: ['contacts', clientId] })

@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
+import { useQueryClient } from '@tanstack/react-query'
 import { AppLayout } from '@/components/layout/app-layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
-import { ArrowLeft, Plus, Search, Loader2, Upload, Download, Edit, Trash2 } from 'lucide-react'
+import { ArrowLeft, Plus, Search, Loader2, Upload, Download, Edit, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   useContacts,
   useContactFolders,
@@ -21,18 +22,32 @@ import { ContactsTable } from '@/components/contacts/contacts-table'
 import { ContactFormDialog } from '@/components/contacts/contact-form-dialog'
 import { ImportDialog } from '@/components/contacts/import-dialog'
 import { FolderFormDialog } from '@/components/contacts/folder-form-dialog'
+import { useAuthClient } from '@/lib/clerk-auth-client'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 export default function FolderDetailPage() {
   const router = useRouter()
   const params = useParams()
   const folderId = params.folderId as string
+  const queryClient = useQueryClient()
+  const { clientId } = useAuthClient()
 
   // Get folder from folders list (simplified - no separate get endpoint)
   const { data: folders = [], isLoading: foldersLoading } = useContactFolders()
   const folder = folders.find(f => f.id === folderId)
   const folderLoading = foldersLoading
   
-  const { data: contacts = [], isLoading: contactsLoading } = useContacts(folderId)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
+  const { data: contactsData, isLoading: contactsLoading } = useContacts(folderId, currentPage, pageSize)
+  const contacts = contactsData?.contacts || []
+  const pagination = contactsData?.pagination
   const { toast } = useToast()
 
   const createMutation = useCreateContact()
@@ -136,6 +151,15 @@ export default function FolderDetailPage() {
       title: 'Import completed',
       description: `${result.successful} contact${result.successful !== 1 ? 's' : ''} imported${result.failed > 0 ? `, ${result.failed} failed` : ''}.`,
     })
+    // Invalidate and refetch contacts to show the newly imported ones
+    // Reset to page 1 to see the newly imported contacts
+    setCurrentPage(1)
+    if (clientId && folderId) {
+      queryClient.invalidateQueries({ queryKey: ['contacts', clientId, folderId] })
+      queryClient.refetchQueries({ queryKey: ['contacts', clientId, folderId] })
+      // Also refresh folder count
+      queryClient.invalidateQueries({ queryKey: ['contact-folders', clientId] })
+    }
   }
 
   const handleExport = async () => {
@@ -183,6 +207,7 @@ export default function FolderDetailPage() {
     setFolderDialogOpen(false)
   }
 
+  // Filter contacts by search query (client-side filtering on current page)
   const filteredContacts = contacts.filter((contact) => {
     if (!searchQuery) return true
     const query = searchQuery.toLowerCase()
@@ -193,6 +218,11 @@ export default function FolderDetailPage() {
       (contact.phone_number || '').includes(query)
     )
   })
+
+  // Reset to page 1 when folder changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [folderId])
 
   if (folderLoading) {
     return (
@@ -310,13 +340,93 @@ export default function FolderDetailPage() {
             <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
           </div>
         ) : (
-          <ContactsTable
-            contacts={filteredContacts}
-            onEdit={handleEditContact}
-            onDelete={handleDeleteContact}
-            onBulkDelete={handleBulkDelete}
-            isLoading={contactsLoading}
-          />
+          <>
+            <ContactsTable
+              contacts={filteredContacts}
+              onEdit={handleEditContact}
+              onDelete={handleDeleteContact}
+              onBulkDelete={handleBulkDelete}
+              isLoading={contactsLoading}
+            />
+            
+            {/* Pagination Controls */}
+            {pagination && pagination.total > 0 && (
+              <div className="flex items-center justify-between px-4 py-4 border-t border-gray-200 dark:border-gray-800">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                    <span>
+                      Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, pagination.total)} of {pagination.total} contacts
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600 dark:text-gray-400">Rows per page:</span>
+                    <Select
+                      value={String(pageSize)}
+                      onValueChange={(value) => {
+                        setPageSize(Number(value))
+                        setCurrentPage(1)
+                      }}
+                    >
+                      <SelectTrigger className="w-[80px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1 || contactsLoading}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Previous
+                  </Button>
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, pagination.pages) }, (_, i) => {
+                      let pageNum: number
+                      if (pagination.pages <= 5) {
+                        pageNum = i + 1
+                      } else if (currentPage <= 3) {
+                        pageNum = i + 1
+                      } else if (currentPage >= pagination.pages - 2) {
+                        pageNum = pagination.pages - 4 + i
+                      } else {
+                        pageNum = currentPage - 2 + i
+                      }
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={currentPage === pageNum ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setCurrentPage(pageNum)}
+                          disabled={contactsLoading}
+                          className="min-w-[40px]"
+                        >
+                          {pageNum}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(p => Math.min(pagination?.pages || 1, p + 1))}
+                    disabled={currentPage >= (pagination?.pages || 1) || contactsLoading}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {/* Contact Form Dialog */}
@@ -335,6 +445,7 @@ export default function FolderDetailPage() {
           open={importDialogOpen}
           onOpenChange={setImportDialogOpen}
           folders={folders}
+          folderId={folderId}
           onImportComplete={handleImportComplete}
         />
 
