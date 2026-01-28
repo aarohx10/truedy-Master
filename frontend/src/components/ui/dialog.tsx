@@ -20,11 +20,11 @@ const DialogOverlay = React.forwardRef<
     ref={ref}
     className={cn(
       // Universal overlay system - covers entire viewport including sidebar
-      "fixed inset-0 z-[70]",
-      // Light mode: translucent white with frosted glass effect
-      "bg-white/50 dark:bg-black/50",
-      // Backdrop blur for premium frosted glass feel (reduced intensity)
-      "backdrop-blur-[12px]",
+      "fixed inset-0 z-[90]",
+      // Light mode: translucent overlay
+      "bg-black/20 dark:bg-black/50",
+      // Reduced backdrop blur to prevent content from appearing invisible
+      "backdrop-blur-sm",
       // Ensure overlay is above all content but below popup
       "pointer-events-auto",
       // Smooth transitions
@@ -54,25 +54,36 @@ const DialogContent = React.forwardRef<
   React.useEffect(() => {
     if (internalRef.current) {
       const element = internalRef.current
-      // Force perfect centering with inline styles
-      element.style.position = 'fixed'
-      element.style.left = '50%'
-      element.style.top = '50%'
-      element.style.transform = 'translate(-50%, -50%)'
-      element.style.margin = '0'
-      element.style.maxHeight = '90vh'
+      
+      // Force visibility immediately
+      element.style.opacity = '1'
+      element.style.visibility = 'visible'
+      element.style.display = 'flex'
+      
+      // Force perfect centering with inline styles (only if not overridden)
+      if (!props.style?.left && !props.style?.top && !props.style?.transform) {
+        element.style.position = 'fixed'
+        element.style.left = '50%'
+        element.style.top = '50%'
+        element.style.transform = 'translate(-50%, -50%)'
+        element.style.margin = '0'
+      }
+      
+      // Only set maxHeight if not overridden by props
+      if (!props.style?.maxHeight && !props.style?.height) {
+        element.style.maxHeight = '90vh'
+      }
       
       // Remove animations but keep positioning
       element.style.animation = 'none'
       element.style.transition = 'none'
-      element.style.opacity = '1'
       
       // Remove all animation-related classes but keep positioning
       const classesToRemove = ['animate-in', 'animate-out', 'fade-in-0', 'fade-out-0', 'zoom-in-95', 'zoom-out-95',
         'slide-in-from-left-1/2', 'slide-in-from-top-48%', 'slide-out-to-left-1/2', 'slide-out-to-top-48%']
       classesToRemove.forEach(cls => element.classList.remove(cls))
     }
-  }, [])
+  }, [props.style, props.className])
   
   return (
     <DialogPortal>
@@ -84,7 +95,7 @@ const DialogContent = React.forwardRef<
         }}
         onAnimationEnd={(e) => e.stopPropagation()}
         className={cn(
-          "z-[80] w-[calc(100%-2rem)] sm:w-full max-w-lg border border-gray-200 dark:border-gray-900 bg-white dark:bg-black p-4 sm:p-6 shadow-lg rounded-lg",
+          "z-[100] w-[calc(100%-2rem)] sm:w-full border border-gray-200 dark:border-gray-900 bg-white dark:bg-black shadow-lg rounded-lg",
           // Ensure modal is always visible and scrollable if needed
           "overflow-y-auto",
           // Use flexbox for content layout
@@ -93,6 +104,8 @@ const DialogContent = React.forwardRef<
           "![animation:none]",
           // Ensure popup is above overlay and not blurred
           "relative",
+          // Force visibility
+          "!opacity-100 !visible",
           className
         )}
         style={{
@@ -102,6 +115,9 @@ const DialogContent = React.forwardRef<
           transform: 'translate(-50%, -50%)',
           margin: 0,
           maxHeight: '90vh',
+          opacity: 1,
+          visibility: 'visible',
+          ...(props.style || {}),
         }}
         {...props}
       >

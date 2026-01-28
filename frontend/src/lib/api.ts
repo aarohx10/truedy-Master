@@ -801,10 +801,28 @@ export const endpoints = {
     me: '/auth/me',
     clients: '/auth/clients',
     users: '/auth/users',
-    apiKeys: '/api-keys',
     providers: {
       tts: '/providers/tts',
     },
+  },
+  
+  // API Keys
+  apiKeys: {
+    list: '/auth/api-keys',
+    create: '/auth/api-keys',
+    delete: (id: string) => `/auth/api-keys/${id}`,
+  },
+  
+  // Telephony
+  telephony: {
+    init: '/telephony/init',
+    search: '/telephony/numbers/search',
+    purchase: '/telephony/numbers/purchase',
+    import: '/telephony/numbers/import',
+    list: '/telephony/numbers',
+    assign: '/telephony/numbers/assign',
+    credentials: '/telephony/credentials',
+    config: '/telephony/config',
   },
   
   // Voices
@@ -878,9 +896,17 @@ export const endpoints = {
   
   // Telephony
   telephony: {
-    config: '/telephony/config',
-    numbers: '/telephony/numbers',
+    init: '/telephony/init',
+    search: '/telephony/numbers/search',
     purchase: '/telephony/numbers/purchase',
+    import: '/telephony/numbers/import',
+    list: '/telephony/numbers',
+    assign: '/telephony/numbers/assign',
+    unassign: '/telephony/numbers/unassign',
+    getAgentNumbers: (agentId: string) => `/telephony/agents/${agentId}/numbers`,
+    getAgentWebhookUrl: (agentId: string) => `/telephony/agents/${agentId}/webhook-url`,
+    credentials: '/telephony/credentials',
+    config: '/telephony/config',
   },
   
   // Webhooks

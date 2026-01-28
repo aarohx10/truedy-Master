@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect } from 'react'
+import { useOrganization } from '@clerk/nextjs'
 import { useAppStore } from '@/stores/app-store'
 import { cn } from '@/lib/utils'
 import { Sidebar } from './sidebar'
@@ -9,7 +11,25 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
-  const { sidebarCollapsed, mobileMenuOpen, setMobileMenuOpen, modalOpen } = useAppStore()
+  const { sidebarCollapsed, mobileMenuOpen, setMobileMenuOpen, modalOpen, setCurrentWorkspace } = useAppStore()
+  const { organization } = useOrganization()
+
+  // Sync Clerk organization with Zustand workspace store
+  useEffect(() => {
+    if (organization?.id) {
+      setCurrentWorkspace({
+        id: organization.id,
+        name: organization.name || 'Workspace',
+        organizationId: organization.id,
+        settings: {
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
+        credits: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+    }
+  }, [organization?.id, organization?.name, organization?.slug, setCurrentWorkspace])
 
   return (
     <div className="flex h-screen overflow-hidden bg-white dark:bg-black">

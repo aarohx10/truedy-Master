@@ -485,6 +485,11 @@ export interface Agent {
   vad_settings?: VADSettings;
   template_id?: string;
   
+  // Telephony fields
+  inbound_phone_number_id?: string;
+  outbound_phone_number_id?: string;
+  inbound_regex?: string;
+  
   // Legacy fields
   configuration?: Record<string, any>;
   success_criteria?: string;

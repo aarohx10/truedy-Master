@@ -13,6 +13,7 @@ from app.core.encryption import encrypt_api_key, decrypt_api_key
 from app.core.exceptions import NotFoundError, ForbiddenError, ConflictError, ValidationError
 from app.core.clerk_sync import sync_client_id_to_org_metadata, get_clerk_org_metadata
 from app.core.debug_logging import debug_logger
+from app.core.api_key_generator import generate_random_api_key
 from app.services.ultravox import ultravox_client
 from app.models.schemas import (
     UserResponse,
@@ -418,6 +419,87 @@ async def get_users(
     }
 
 
+@router.get("/api-keys")
+async def list_api_keys(
+    current_user: dict = Depends(get_current_user),
+    x_client_id: Optional[str] = Header(None),
+):
+    """List all API keys for the current client (without decrypted values)"""
+    if current_user["role"] not in ["client_admin", "agency_admin"]:
+        raise ForbiddenError("Insufficient permissions")
+    
+    db = DatabaseService(current_user["token"])
+    db.set_auth(current_user["token"])
+    
+    # Query api_keys table filtered by client_id
+    api_keys = db.select(
+        "api_keys",
+        {"client_id": current_user["client_id"]},
+        order_by="created_at DESC",
+    )
+    
+    # Convert to ApiKeyResponse (never return decrypted keys)
+    api_key_responses = [
+        ApiKeyResponse(
+            id=key["id"],
+            client_id=key["client_id"],
+            service=key["service"],
+            key_name=key["key_name"],
+            is_active=key["is_active"],
+            created_at=key["created_at"],
+        )
+        for key in api_keys
+    ]
+    
+    return {
+        "data": api_key_responses,
+        "meta": ResponseMeta(
+            request_id=str(uuid.uuid4()),
+            ts=datetime.utcnow(),
+        ),
+    }
+
+
+@router.delete("/api-keys/{api_key_id}")
+async def delete_api_key(
+    api_key_id: str,
+    current_user: dict = Depends(get_current_user),
+    x_client_id: Optional[str] = Header(None),
+):
+    """Delete an API key"""
+    if current_user["role"] not in ["client_admin", "agency_admin"]:
+        raise ForbiddenError("Insufficient permissions")
+    
+    db = DatabaseService(current_user["token"])
+    db.set_auth(current_user["token"])
+    
+    # Verify the API key exists and belongs to the current user's client_id
+    api_key = db.select_one(
+        "api_keys",
+        {
+            "id": api_key_id,
+            "client_id": current_user["client_id"],
+        },
+    )
+    
+    if not api_key:
+        raise NotFoundError("api_key", api_key_id)
+    
+    # Hard delete from database
+    db.delete("api_keys", {"id": api_key_id})
+    
+    return {
+        "data": {
+            "api_key_id": api_key_id,
+            "deleted": True,
+        },
+        "meta": ResponseMeta(
+            request_id=str(uuid.uuid4()),
+            ts=datetime.utcnow(),
+        ),
+    }
+
+
 @router.post("/api-keys")
 async def create_api_key(
     api_key_data: ApiKeyCreate,
@@ -431,45 +513,55 @@ async def create_api_key(
     db = DatabaseService(current_user["token"])
     db.set_auth(current_user["token"])
     
-    # Check for duplicate
+    # Check for duplicate key name
     existing = db.select_one(
         "api_keys",
         {
             "client_id": current_user["client_id"],
-            "service": api_key_data.service,
             "key_name": api_key_data.key_name,
         },
     )
     if existing:
         raise ConflictError("API key with this name already exists")
     
+    # Always generate API key
+    api_key_value = generate_random_api_key()
+    logger.info(f"Generated random API key, key_name: {api_key_data.key_name}")
+    
     # Encrypt API key
-    encrypted_key = encrypt_api_key(api_key_data.api_key)
+    encrypted_key = encrypt_api_key(api_key_value)
     if not encrypted_key:
         raise ValidationError("Failed to encrypt API key")
     
-    # Insert API key
+    # Insert API key with default service value (required by DB schema)
     api_key_record = db.insert(
         "api_keys",
         {
             "client_id": current_user["client_id"],
-            "service": api_key_data.service,
+            "service": "custom",  # Default service since we don't require it
             "key_name": api_key_data.key_name,
             "encrypted_key": encrypted_key,
-            "settings": api_key_data.settings,
+            "settings": {},
             "is_active": True,
         },
     )
     
+    # Return response with decrypted key (one-time display)
+    response_data = ApiKeyResponse(
+        id=api_key_record["id"],
+        client_id=api_key_record["client_id"],
+        service=api_key_record["service"],
+        key_name=api_key_record["key_name"],
+        is_active=api_key_record["is_active"],
+        created_at=api_key_record["created_at"],
+    )
+    
+    # Include the plaintext key in response for one-time display
+    response_dict = response_data.model_dump()
+    response_dict["api_key"] = api_key_value  # Include plaintext for one-time display
+    
     return {
-        "data": ApiKeyResponse(
-            id=api_key_record["id"],
-            client_id=api_key_record["client_id"],
-            service=api_key_record["service"],
-            key_name=api_key_record["key_name"],
-            is_active=api_key_record["is_active"],
-            created_at=api_key_record["created_at"],
-        ),
+        "data": response_dict,
         "meta": ResponseMeta(
             request_id=str(uuid.uuid4()),
             ts=datetime.utcnow(),

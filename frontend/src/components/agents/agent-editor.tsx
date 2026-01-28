@@ -26,6 +26,7 @@ import { PromptTab } from '@/components/agents/agent-form-sections/prompt-tab'
 import { GreetingTab } from '@/components/agents/agent-form-sections/greeting-tab'
 import { InactivityMessagesTab } from '@/components/agents/agent-form-sections/inactivity-messages-tab'
 import { SettingsTab } from '@/components/agents/agent-form-sections/settings-tab'
+import { PhoneNumbersTab } from '@/components/agents/agent-form-sections/phone-numbers-tab'
 import { AIAssistancePanel } from '@/components/agents/ai-assistance-panel'
 import { TestAgentPanel } from '@/components/agents/test-agent-panel'
 import { Sparkles, Save, Loader2, Clock } from 'lucide-react'
@@ -439,7 +440,7 @@ export function AgentEditor({ agentId }: AgentEditorProps) {
           <div className="flex-1 min-h-0 bg-white dark:bg-gray-950 rounded-3xl border border-gray-100 dark:border-gray-900 shadow-sm overflow-hidden flex flex-col">
             <Tabs defaultValue="prompt" className="flex-1 flex flex-col min-h-0">
               <div className="px-6 pt-4 pb-2">
-                <TabsList className="w-full max-w-2xl grid grid-cols-4 bg-gray-100/50 dark:bg-gray-900/50 p-1 rounded-xl">
+                <TabsList className="w-full max-w-2xl grid grid-cols-5 bg-gray-100/50 dark:bg-gray-900/50 p-1 rounded-xl">
                   <TabsTrigger 
                     value="prompt" 
                     className="rounded-lg text-gray-600 dark:text-gray-400 data-[state=active]:bg-white dark:data-[state=active]:bg-gray-800 data-[state=active]:shadow-sm data-[state=active]:!text-gray-900 dark:data-[state=active]:!text-white data-[state=active]:font-semibold"
@@ -463,6 +464,12 @@ export function AgentEditor({ agentId }: AgentEditorProps) {
                     className="rounded-lg text-gray-600 dark:text-gray-400 data-[state=active]:bg-white dark:data-[state=active]:bg-gray-800 data-[state=active]:shadow-sm data-[state=active]:!text-gray-900 dark:data-[state=active]:!text-white data-[state=active]:font-semibold"
                   >
                     Settings
+                  </TabsTrigger>
+                  <TabsTrigger 
+                    value="phone-numbers" 
+                    className="rounded-lg text-gray-600 dark:text-gray-400 data-[state=active]:bg-white dark:data-[state=active]:bg-gray-800 data-[state=active]:shadow-sm data-[state=active]:!text-gray-900 dark:data-[state=active]:!text-white data-[state=active]:font-semibold"
+                  >
+                    Phone Numbers
                   </TabsTrigger>
                 </TabsList>
               </div>
@@ -510,6 +517,9 @@ export function AgentEditor({ agentId }: AgentEditorProps) {
                     vadSettings={vadSettings || {}}
                     onVADSettingsChange={setVadSettings}
                   />
+                </TabsContent>
+                <TabsContent value="phone-numbers" className="mt-2 h-full">
+                  <PhoneNumbersTab agentId={agentId} />
                 </TabsContent>
               </div>
             </Tabs>

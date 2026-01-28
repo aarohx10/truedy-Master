@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/stores/app-store'
 import { useState, useTransition } from 'react'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
-import { useUser, UserButton, OrganizationSwitcher } from '@clerk/nextjs'
+import { useUser, UserButton, OrganizationSwitcher, UserProfile } from '@clerk/nextjs'
 import {
   Home,
   BarChart3,
@@ -170,9 +170,11 @@ export function Sidebar() {
           {(!sidebarCollapsed || mobileMenuOpen) && (
             <div className="px-6 py-3 border-b border-gray-100 dark:border-gray-900">
               <OrganizationSwitcher
+                hidePersonal={true}
                 appearance={{
                   elements: {
-                    organizationSwitcherTrigger: "w-full justify-start px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900 rounded-lg transition-colors",
+                    rootBox: "w-full",
+                    organizationSwitcherTrigger: "w-full justify-between px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900 rounded-lg transition-colors",
                     organizationPreview: "text-gray-900 dark:text-white",
                   },
                 }}
@@ -207,15 +209,12 @@ export function Sidebar() {
                 {/* Settings Items */}
                 <div className="space-y-1">
                 {[
-                  { title: 'API Keys', href: '/settings?tab=api-keys', icon: 'Key', tab: 'api-keys' },
-                  { title: 'Billing', href: '/billing', icon: 'CreditCard', tab: 'billing' },
-                  { title: 'Team', href: '/settings?tab=team', icon: 'Users', tab: 'team' },
-                  { title: 'Workspace', href: '/settings?tab=workspace', icon: 'Building2', tab: 'workspace' },
+                  { title: 'API Keys', href: '/settings/api-keys', icon: 'Key' },
+                  { title: 'Billing', href: '/settings/billing', icon: 'CreditCard' },
+                  { title: 'Team', href: '/settings/team', icon: 'Users' },
                 ].map((item) => {
                   const Icon = iconMap[item.icon]
-                  const currentTab = searchParams?.get('tab') || 'api-keys'
-                  const isActive = (item.tab === 'billing' && pathname === '/billing') || 
-                                   (item.tab !== 'billing' && pathname === '/settings' && currentTab === item.tab)
+                  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
                   const isClickedActive = clickedPath === item.href
 
                     return (
@@ -325,7 +324,32 @@ export function Sidebar() {
                   }}
                   showName={true}
                   afterSignOutUrl="/"
-                />
+                >
+                  <UserProfile.Page
+                    label="Voice Settings"
+                    labelIcon={<Mic2 className="h-4 w-4" />}
+                    url="voice"
+                  >
+                    <div className="p-6">
+                      <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Voice Settings</h2>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        Voice cloning and voice settings will be available here.
+                      </p>
+                    </div>
+                  </UserProfile.Page>
+                  <UserProfile.Page
+                    label="API Keys"
+                    labelIcon={<Key className="h-4 w-4" />}
+                    url="api-keys"
+                  >
+                    <div className="p-6">
+                      <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">API Keys</h2>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        Manage your API keys for external integrations.
+                      </p>
+                    </div>
+                  </UserProfile.Page>
+                </UserButton>
               </div>
             </div>
           )}

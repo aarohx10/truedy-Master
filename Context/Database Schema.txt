@@ -4,8 +4,12 @@
     "column_names": "id, email, otp_code, expires_at, used, created_at"
   },
   {
+    "table_name": "agent_templates",
+    "column_names": "id, name, description, system_prompt, category, is_active, created_at, updated_at"
+  },
+  {
     "table_name": "agents",
-    "column_names": "id, client_id, ultravox_agent_id, name, description, voice_id, system_prompt, model, tools, knowledge_bases, status, created_at, updated_at, configuration, success_criteria, webhook_url"
+    "column_names": "id, client_id, ultravox_agent_id, name, description, voice_id, system_prompt, model, tools, knowledge_bases, status, created_at, updated_at, configuration, success_criteria, webhook_url, call_template_name, greeting_settings, inactivity_messages, temperature, language_hint, time_exceeded_message, recording_enabled, join_timeout, max_duration, initial_output_medium, vad_settings, template_id"
   },
   {
     "table_name": "api_keys",
@@ -56,16 +60,8 @@
     "column_names": "id, client_id, key, request_hash, response_body, status_code, created_at, ttl_at"
   },
   {
-    "table_name": "knowledge_base_chunks",
-    "column_names": "id, kb_id, content, embedding, created_at"
-  },
-  {
-    "table_name": "knowledge_base_documents",
-    "column_names": "id, client_id, knowledge_base_id, s3_key, file_type, file_size, status, ultravox_source_id, error_message, created_at, updated_at"
-  },
-  {
-    "table_name": "knowledge_documents",
-    "column_names": "id, client_id, name, description, language, ultravox_corpus_id, status, settings, created_at, updated_at"
+    "table_name": "knowledge_bases",
+    "column_names": "id, client_id, name, description, content, file_name, file_type, file_size, status, ultravox_tool_id, language, created_at, updated_at"
   },
   {
     "table_name": "subscription_tiers",

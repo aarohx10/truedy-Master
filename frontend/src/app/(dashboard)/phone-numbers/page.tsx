@@ -4,530 +4,272 @@ import { useState } from 'react'
 import { AppLayout } from '@/components/layout/app-layout'
 import { Button } from '@/components/ui/button'
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Phone, Plus, Server, Info, X, AlertCircle } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Phone, Plus, Loader2, MoreVertical, PhoneIncoming, PhoneOutgoing, X } from 'lucide-react'
+import { usePhoneNumbers, useAssignNumber, useUnassignNumber } from '@/hooks/use-telephony'
+import { useAgents } from '@/hooks/use-agents'
+import { useToast } from '@/hooks/use-toast'
+import { PhoneNumber } from '@/hooks/use-telephony'
+import { BuyNumberModal } from '@/components/telephony/buy-number-modal'
+import { ImportNumberModal } from '@/components/telephony/import-number-modal'
+import { PhoneNumberAssignmentModal } from '@/components/telephony/phone-number-assignment-modal'
 
 export default function PhoneNumbersPage() {
-  const [addNumberDialogOpen, setAddNumberDialogOpen] = useState(false)
-  const [twilioDialogOpen, setTwilioDialogOpen] = useState(false)
-  const [sipTrunkDialogOpen, setSipTrunkDialogOpen] = useState(false)
-  const [label, setLabel] = useState('')
-  const [phoneNumber, setPhoneNumber] = useState('')
-  const [countryCode, setCountryCode] = useState('+1')
-  const [twilioAccountSid, setTwilioAccountSid] = useState('')
-  
-  // SIP Trunk states
-  const [sipLabel, setSipLabel] = useState('')
-  const [sipPhoneNumber, setSipPhoneNumber] = useState('')
-  const [showStaticIpBanner, setShowStaticIpBanner] = useState(true)
-  const [mediaEncryption, setMediaEncryption] = useState('Allowed')
-  const [sipUsername, setSipUsername] = useState('')
-  const [sipPassword, setSipPassword] = useState('')
-  const [outboundAddress, setOutboundAddress] = useState('')
-  
-  // Add number states
-  const [newNumberLabel, setNewNumberLabel] = useState('')
-  const [newNumberCountryCode, setNewNumberCountryCode] = useState('+1')
-  const [areaCode, setAreaCode] = useState('')
+  const { data: phoneNumbers = [], isLoading } = usePhoneNumbers()
+  const { data: agents = [] } = useAgents()
+  const assignMutation = useAssignNumber()
+  const unassignMutation = useUnassignNumber()
+  const { toast } = useToast()
+
+  const [buyModalOpen, setBuyModalOpen] = useState(false)
+  const [importModalOpen, setImportModalOpen] = useState(false)
+  const [assignmentModalOpen, setAssignmentModalOpen] = useState(false)
+  const [selectedNumber, setSelectedNumber] = useState<PhoneNumber | null>(null)
+  const [assignmentType, setAssignmentType] = useState<'inbound' | 'outbound'>('inbound')
+
+  const handleAssign = (number: PhoneNumber, type: 'inbound' | 'outbound') => {
+    setSelectedNumber(number)
+    setAssignmentType(type)
+    setAssignmentModalOpen(true)
+  }
+
+  const handleUnassign = async (number: PhoneNumber, type: 'inbound' | 'outbound') => {
+    try {
+      await unassignMutation.mutateAsync({
+        number_id: number.id,
+        assignment_type: type,
+      })
+    } catch (error) {
+      // Error handled by hook
+    }
+  }
+
+  const getAgentName = (agentId?: string) => {
+    if (!agentId) return null
+    const agent = agents.find(a => a.id === agentId)
+    return agent?.name || 'Unknown Agent'
+  }
+
   return (
     <AppLayout>
       <div className="space-y-6">
         {/* Page Header */}
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Phone numbers</h1>
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Phone Numbers</h1>
             <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-              Add or import your phone numbers
+              Manage phone numbers and assign them to agents for inbound and outbound calls
             </p>
           </div>
           <div className="flex gap-3">
-            <Button 
+            <Button
               variant="outline"
               className="gap-2 hover:bg-primary/5 hover:border-primary/40 transition-all"
-              onClick={() => setAddNumberDialogOpen(true)}
+              onClick={() => setBuyModalOpen(true)}
             >
               <Plus className="h-4 w-4" />
-              Add number
+              Buy Number
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30 gap-2">
+            <Button
+              className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30 gap-2"
+              onClick={() => setImportModalOpen(true)}
+            >
+              <Plus className="h-4 w-4" />
+              Import Number
+            </Button>
+          </div>
+        </div>
+
+        {/* Phone Numbers Table */}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+          </div>
+        ) : phoneNumbers.length === 0 ? (
+          <div className="border border-gray-200 dark:border-gray-900 rounded-lg bg-white dark:bg-black">
+            <div className="flex flex-col items-center justify-center py-20">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 mb-4">
+                <Phone className="h-8 w-8 text-primary" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                No phone numbers
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                Get started by buying a number or importing an existing one
+              </p>
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setBuyModalOpen(true)}
+                  className="gap-2"
+                >
                   <Plus className="h-4 w-4" />
-                  Import number
+                  Buy Number
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-                <DropdownMenuItem onClick={() => setTwilioDialogOpen(true)} className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">
-                  <Phone className="h-4 w-4 mr-2 text-primary" />
-                  From Twilio
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setSipTrunkDialogOpen(true)} className="text-gray-700 dark:text-gray-300 hover:bg-primary/5">
-                  <Server className="h-4 w-4 mr-2 text-primary" />
-                  From SIP Trunk
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                <Button
+                  onClick={() => setImportModalOpen(true)}
+                  className="gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Import Number
+                </Button>
+              </div>
+            </div>
           </div>
-        </div>
-
-        {/* Empty State */}
-        <div className="border border-gray-200 dark:border-gray-900 rounded-lg bg-white dark:bg-black hover:border-primary/40 hover:shadow-lg transition-all">
-          <div className="flex flex-col items-center justify-center py-20">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 mb-4">
-              <Phone className="h-8 w-8 text-primary" />
-            </div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-              No phone numbers
-            </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              You don&apos;t have any phone numbers yet. Use the buttons above to add or import a number.
-            </p>
+        ) : (
+          <div className="border border-gray-200 dark:border-gray-900 rounded-lg bg-white dark:bg-black">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Phone Number</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Inbound Agent</TableHead>
+                  <TableHead>Outbound Agent</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {phoneNumbers.map((number) => (
+                  <TableRow key={number.id} className="hover:bg-gray-50 dark:hover:bg-gray-900">
+                    <TableCell className="font-medium">
+                      {number.phone_number}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          number.status === 'active'
+                            ? 'default'
+                            : number.status === 'pending'
+                            ? 'secondary'
+                            : 'destructive'
+                        }
+                      >
+                        {number.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={number.is_trudy_managed ? 'default' : 'outline'}>
+                        {number.is_trudy_managed ? 'Trudy-Managed' : 'BYOC'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {number.inbound_agent_id ? (
+                        <div className="flex items-center gap-2">
+                          <PhoneIncoming className="h-4 w-4 text-green-600" />
+                          <span className="text-sm">{getAgentName(number.inbound_agent_id)}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0"
+                            onClick={() => handleUnassign(number, 'inbound')}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => handleAssign(number, 'inbound')}
+                        >
+                          <PhoneIncoming className="h-3 w-3" />
+                          Assign Inbound
+                        </Button>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {number.outbound_agent_id ? (
+                        <div className="flex items-center gap-2">
+                          <PhoneOutgoing className="h-4 w-4 text-blue-600" />
+                          <span className="text-sm">{getAgentName(number.outbound_agent_id)}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0"
+                            onClick={() => handleUnassign(number, 'outbound')}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => handleAssign(number, 'outbound')}
+                        >
+                          <PhoneOutgoing className="h-3 w-3" />
+                          Assign Outbound
+                        </Button>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {!number.inbound_agent_id && (
+                            <DropdownMenuItem onClick={() => handleAssign(number, 'inbound')}>
+                              <PhoneIncoming className="h-4 w-4 mr-2" />
+                              Assign for Inbound
+                            </DropdownMenuItem>
+                          )}
+                          {!number.outbound_agent_id && (
+                            <DropdownMenuItem onClick={() => handleAssign(number, 'outbound')}>
+                              <PhoneOutgoing className="h-4 w-4 mr-2" />
+                              Assign for Outbound
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
-        </div>
+        )}
 
-        {/* Add Number Dialog */}
-        <Dialog open={addNumberDialogOpen} onOpenChange={setAddNumberDialogOpen}>
-          <DialogContent className="max-w-lg bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-lg text-gray-900 dark:text-white">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-                  <Phone className="h-4 w-4 text-primary" />
-                </div>
-                Add new phone number
-              </DialogTitle>
-            </DialogHeader>
-
-            <div className="space-y-4 py-4">
-              {/* Label */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium text-gray-900 dark:text-white">Label</Label>
-                <Input
-                  placeholder="Easy to identify name for this number"
-                  value={newNumberLabel}
-                  onChange={(e) => setNewNumberLabel(e.target.value)}
-                  className="w-full focus:ring-2 focus:ring-primary focus:border-primary"
-                />
-              </div>
-
-              {/* Country */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium text-gray-900 dark:text-white">Country</Label>
-                <Select value={newNumberCountryCode} onValueChange={setNewNumberCountryCode}>
-                  <SelectTrigger className="w-full focus:ring-2 focus:ring-primary focus:border-primary">
-                    <SelectValue>
-                      <div className="flex items-center gap-2">
-                        <span>{newNumberCountryCode === '+1' ? '🇺🇸' : newNumberCountryCode === '+44' ? '🇬🇧' : '🇮🇳'}</span>
-                        <span>{newNumberCountryCode === '+1' ? 'United States' : newNumberCountryCode === '+44' ? 'United Kingdom' : 'India'}</span>
-                      </div>
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="+1">
-                      <div className="flex items-center gap-2">
-                        <span>🇺🇸</span>
-                        <span>United States</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="+44">
-                      <div className="flex items-center gap-2">
-                        <span>🇬🇧</span>
-                        <span>United Kingdom</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="+91">
-                      <div className="flex items-center gap-2">
-                        <span>🇮🇳</span>
-                        <span>India</span>
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Area Code (Optional) */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium text-gray-900 dark:text-white">Area Code (Optional)</Label>
-                <Input
-                  placeholder="e.g., 212, 415, 202"
-                  value={areaCode}
-                  onChange={(e) => setAreaCode(e.target.value)}
-                  className="w-full focus:ring-2 focus:ring-primary focus:border-primary"
-                />
-                <p className="text-xs text-gray-600 dark:text-gray-400">
-                  Specify a preferred area code for your new number
-                </p>
-              </div>
-
-              {/* Info Banner */}
-              <div className="flex items-start gap-3 p-4 bg-primary/10 dark:bg-primary/20 border border-primary/20 dark:border-primary/30 rounded-lg">
-                <Info className="h-5 w-5 text-primary dark:text-primary flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <p className="text-sm text-gray-700 dark:text-gray-300">
-                    A new phone number will be provisioned for you. Monthly charges may apply.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="flex justify-end gap-2 pt-4 border-t border-gray-200 dark:border-gray-900">
-              <Button
-                variant="outline"
-                onClick={() => setAddNumberDialogOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30"
-                onClick={() => {
-                  console.log('Adding new number:', {
-                    label: newNumberLabel,
-                    countryCode: newNumberCountryCode,
-                    areaCode,
-                  })
-                  setAddNumberDialogOpen(false)
-                }}
-              >
-                Add Number
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Import from Twilio Dialog */}
-        <Dialog open={twilioDialogOpen} onOpenChange={setTwilioDialogOpen}>
-          <DialogContent className="max-w-lg bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-lg text-gray-900 dark:text-white">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-                  <Phone className="h-4 w-4 text-primary" />
-                </div>
-                Import phone number from Twilio
-              </DialogTitle>
-            </DialogHeader>
-
-            <div className="space-y-4 py-4">
-              {/* Label */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium text-gray-900 dark:text-white">Label</Label>
-                <Input
-                  placeholder="Easy to identify name of the phone number"
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                  className="w-full focus:ring-2 focus:ring-primary focus:border-primary"
-                />
-              </div>
-
-              {/* Phone Number */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium text-gray-900 dark:text-white">Phone number</Label>
-                <div className="flex gap-2">
-                  <Select value={countryCode} onValueChange={setCountryCode}>
-                    <SelectTrigger className="w-24 focus:ring-2 focus:ring-primary focus:border-primary">
-                      <SelectValue>
-                        <div className="flex items-center gap-2">
-                          <span>🇺🇸</span>
-                          <span>{countryCode}</span>
-                        </div>
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="+1">
-                        <div className="flex items-center gap-2">
-                          <span>🇺🇸</span>
-                          <span>+1</span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="+44">
-                        <div className="flex items-center gap-2">
-                          <span>🇬🇧</span>
-                          <span>+44</span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="+91">
-                        <div className="flex items-center gap-2">
-                          <span>🇮🇳</span>
-                          <span>+91</span>
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    placeholder=""
-                    value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value)}
-                    className="flex-1 focus:ring-2 focus:ring-primary focus:border-primary"
-                  />
-                </div>
-              </div>
-
-              {/* Twilio Account SID */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium text-gray-900 dark:text-white">Twilio Account SID</Label>
-                <Input
-                  placeholder="Twilio Account SID"
-                  value={twilioAccountSid}
-                  onChange={(e) => setTwilioAccountSid(e.target.value)}
-                  className="w-full focus:ring-2 focus:ring-primary focus:border-primary"
-                />
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="flex justify-end">
-              <Button
-                className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30"
-                onClick={() => {
-                  console.log('Importing from Twilio:', {
-                    label,
-                    phoneNumber: `${countryCode}${phoneNumber}`,
-                    twilioAccountSid,
-                  })
-                  setTwilioDialogOpen(false)
-                }}
-              >
-                Import
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Import from SIP Trunk Dialog */}
-        <Dialog open={sipTrunkDialogOpen} onOpenChange={setSipTrunkDialogOpen}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-white dark:bg-black border-gray-200 dark:border-gray-900">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-lg text-gray-900 dark:text-white">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-                  <Server className="h-4 w-4 text-primary" />
-                </div>
-                Import SIP Trunk
-              </DialogTitle>
-            </DialogHeader>
-
-            <div className="space-y-6 py-4">
-              {/* Label and Phone Number */}
-              <div className="space-y-4 p-6 border border-gray-200 dark:border-gray-800 rounded-lg bg-gray-50 dark:bg-gray-900">
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium text-gray-900 dark:text-white">Label</Label>
-                  <Input
-                    placeholder="Name of the phone number"
-                    value={sipLabel}
-                    onChange={(e) => setSipLabel(e.target.value)}
-                    className="w-full bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium text-gray-900 dark:text-white">Phone number</Label>
-                  <Input
-                    placeholder="Phone number +12025550123, SIP extension 1234 or any other identifier"
-                    value={sipPhoneNumber}
-                    onChange={(e) => setSipPhoneNumber(e.target.value)}
-                    className="w-full bg-white dark:bg-black focus:ring-2 focus:ring-primary focus:border-primary"
-                  />
-                </div>
-              </div>
-
-              {/* Static IP Banner */}
-              {showStaticIpBanner && (
-                <div className="flex items-start gap-3 p-4 bg-primary/5 border border-primary/20 rounded-lg">
-                  <Info className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 space-y-1">
-                    <h4 className="font-semibold text-sm text-gray-900 dark:text-white">
-                      Static IP SIP Servers Available
-                    </h4>
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
-                      ElevenLabs offers SIP servers with static IP addresses for enterprise
-                      clients requiring IP allowlisting. Static IP infrastructure uses a /24
-                      block across US, EU, and India regions. Available for enterprise
-                      accounts.{' '}
-                      <button className="font-medium underline text-primary hover:text-primary/80">Contact sales</button> to learn
-                      more.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setShowStaticIpBanner(false)}
-                    className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 flex-shrink-0"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              )}
-
-              {/* Inbound Configuration */}
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">
-                    Inbound Configuration
-                  </h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Forward calls to the ElevenLabs SIP server
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  {/* Media Encryption */}
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium text-gray-900 dark:text-white">Media Encryption</Label>
-                    <Select value={mediaEncryption} onValueChange={setMediaEncryption}>
-                      <SelectTrigger className="w-full focus:ring-2 focus:ring-primary focus:border-primary">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Allowed">Allowed</SelectItem>
-                        <SelectItem value="Required">Required</SelectItem>
-                        <SelectItem value="Disabled">Disabled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Allowed Numbers */}
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium text-gray-900 dark:text-white">
-                      Allowed Numbers (Optional)
-                    </Label>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      Phone numbers that are allowed to use this trunk. Leave empty to allow all
-                      numbers.
-                    </p>
-                    <Button variant="outline" className="gap-2 hover:bg-primary/5 hover:border-primary/40 transition-all">
-                      <Plus className="h-4 w-4" />
-                      Add Number
-                    </Button>
-                  </div>
-
-                  {/* Remote Domains */}
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Label className="text-sm font-medium text-gray-900 dark:text-white">
-                        Remote Domains (Optional)
-                      </Label>
-                      <Info className="h-4 w-4 text-primary" />
-                    </div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      Specify the FQDN domains of your SIP servers from which you originate the
-                      calls. E.g. example.pstn.twilio.com. These domains are used for TLS
-                      certificate validation. Leave this field empty if you don&apos;t use TLS.
-                    </p>
-                    <Button variant="outline" className="gap-2 hover:bg-primary/5 hover:border-primary/40 transition-all">
-                      <Plus className="h-4 w-4" />
-                      Add Domain
-                    </Button>
-                  </div>
-
-                  {/* Authentication */}
-                  <div className="space-y-4">
-                    <div>
-                      <Label className="text-sm font-medium text-gray-900 dark:text-white">
-                        Authentication (Optional)
-                      </Label>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                        Provide digest authentication credentials those will be used to
-                        authenticate the inbound calls.
-                      </p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium text-gray-900 dark:text-white">
-                        SIP Trunk Username
-                      </Label>
-                      <Input
-                        placeholder="Username for SIP digest authentication"
-                        value={sipUsername}
-                        onChange={(e) => setSipUsername(e.target.value)}
-                        className="w-full focus:ring-2 focus:ring-primary focus:border-primary"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium text-gray-900 dark:text-white">
-                        SIP Trunk Password
-                      </Label>
-                      <Input
-                        type="password"
-                        placeholder="Password for SIP digest authentication"
-                        value={sipPassword}
-                        onChange={(e) => setSipPassword(e.target.value)}
-                        className="w-full focus:ring-2 focus:ring-primary focus:border-primary"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Outbound Configuration */}
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">
-                    Outbound Configuration
-                  </h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Configure where ElevenLabs should send calls for your phone number
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium text-gray-900 dark:text-white">Address</Label>
-                  <Input
-                    placeholder="example.pstn.twilio.com"
-                    value={outboundAddress}
-                    onChange={(e) => setOutboundAddress(e.target.value)}
-                    className="w-full focus:ring-2 focus:ring-primary focus:border-primary"
-                  />
-                  <div className="flex items-start gap-2 mt-2">
-                    <AlertCircle className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-gray-600 dark:text-gray-400">
-                      Hostname or IP the SIP INVITE is sent to. This is not a SIP URI and
-                      shouldn&apos;t contain the sip: protocol. In case of TLS, use the hostname
-                      with valid certificate.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="flex justify-end pt-4 border-t border-gray-200 dark:border-gray-900">
-              <Button
-                className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/30"
-                onClick={() => {
-                  console.log('Importing from SIP Trunk:', {
-                    sipLabel,
-                    sipPhoneNumber,
-                    mediaEncryption,
-                    sipUsername,
-                    sipPassword,
-                    outboundAddress,
-                  })
-                  setSipTrunkDialogOpen(false)
-                }}
-              >
-                Import
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+        {/* Modals */}
+        <BuyNumberModal
+          open={buyModalOpen}
+          onOpenChange={setBuyModalOpen}
+        />
+        <ImportNumberModal
+          open={importModalOpen}
+          onOpenChange={setImportModalOpen}
+        />
+        {selectedNumber && (
+          <PhoneNumberAssignmentModal
+            open={assignmentModalOpen}
+            onOpenChange={setAssignmentModalOpen}
+            phoneNumber={selectedNumber}
+            assignmentType={assignmentType}
+            onSuccess={() => {
+              setAssignmentModalOpen(false)
+              setSelectedNumber(null)
+            }}
+          />
+        )}
       </div>
     </AppLayout>
   )
 }
-
