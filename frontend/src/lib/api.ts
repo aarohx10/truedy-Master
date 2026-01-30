@@ -31,23 +31,47 @@ export const queryClient = new QueryClient({
 const PRODUCTION_BACKEND_URL = 'https://truedy.sendorahq.com/api/v1'
 const LOCALHOST_BACKEND_URL = 'http://localhost:8000/api/v1'
 
+function isLocalHostname(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname.startsWith('192.168.') ||
+    hostname.startsWith('10.') ||
+    hostname.startsWith('172.')
+  )
+}
+
+function isLocalhostUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    return isLocalHostname(u.hostname)
+  } catch {
+    return url.includes('localhost') || url.includes('127.0.0.1')
+  }
+}
+
 export const API_URL = (() => {
   const envUrl = typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL?.trim()
-  if (envUrl) {
-    const base = envUrl.replace(/\/+$/, '')
-    return base.endsWith('/api/v1') ? base : `${base}/api/v1`
-  }
+  const normalizedEnv = envUrl
+    ? (envUrl.replace(/\/+$/, '').endsWith('/api/v1')
+        ? envUrl.replace(/\/+$/, '')
+        : `${envUrl.replace(/\/+$/, '')}/api/v1`)
+    : ''
 
+  // In the browser: never use localhost API when the app is not on localhost (fixes wrong .env in production)
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname
-    const isLocal =
-      hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname.startsWith('192.168.') ||
-      hostname.startsWith('10.') ||
-      hostname.startsWith('172.')
+    const appIsLocal = isLocalHostname(hostname)
+    if (!appIsLocal && normalizedEnv && isLocalhostUrl(normalizedEnv)) {
+      return PRODUCTION_BACKEND_URL
+    }
+    if (!appIsLocal && !normalizedEnv) return PRODUCTION_BACKEND_URL
+    if (appIsLocal && !normalizedEnv) return LOCALHOST_BACKEND_URL
+  }
 
-    if (!isLocal) return PRODUCTION_BACKEND_URL
+  if (normalizedEnv) return normalizedEnv
+  if (typeof window !== 'undefined') {
+    return isLocalHostname(window.location.hostname) ? LOCALHOST_BACKEND_URL : PRODUCTION_BACKEND_URL
   }
   return LOCALHOST_BACKEND_URL
 })()

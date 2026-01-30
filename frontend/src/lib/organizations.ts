@@ -17,39 +17,14 @@ export function useOrganizationSync() {
   const { user } = useUser()
   const lastOrgIdRef = useRef<string | null>(null)
 
-  // Sync organization with database when organization changes
+  // Notify backend of org context when organization changes (backend uses JWT org_id; no client_id)
   const syncOrganization = async () => {
     if (!organization || !user) return
-
     try {
-      // Call /auth/me endpoint which will:
-      // 1. Check Clerk org metadata for client_id
-      // 2. Create/update client if needed
-      // 3. Ensure user is linked to correct client_id
-      const response = await apiClient.get(endpoints.auth.me)
-      // Response structure: { data: UserResponse, meta: {...} }
-      // UserResponse has: { id, client_id, email, role, ... }
-      const userData = response.data as any
-      const clientId = userData?.client_id || userData?.data?.client_id
-
-      if (clientId) {
-        // Update authManager with the client_id
-        authManager.setClientId(clientId)
-        console.log('[ORGANIZATIONS] Organization synced with client:', clientId)
-      } else {
-        console.warn('[ORGANIZATIONS] No client_id found in /auth/me response')
-      }
+      await apiClient.get(endpoints.auth.me)
     } catch (error) {
       const rawError = error instanceof Error ? error : new Error(String(error))
-      console.error('[ORGANIZATIONS] Failed to sync organization (RAW ERROR)', {
-        organizationId: organization?.id,
-        userId: user?.id,
-        error: rawError,
-        errorMessage: rawError.message,
-        errorStack: rawError.stack,
-        errorName: rawError.name,
-        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
-      })
+      console.error('[ORGANIZATIONS] Failed to sync organization:', { organizationId: organization?.id, error: rawError.message })
     }
   }
 
@@ -65,16 +40,10 @@ export function useOrganizationSync() {
       })
       lastOrgIdRef.current = currentOrgId
       
-      // Trigger /auth/me to refresh client_id and sync with new organization
-      // This ensures the entire dashboard "flips" to the new organization's data
       syncOrganization().then(() => {
-        // Force a page refresh to ensure all queries use the new client_id
-        // This is more reliable than invalidating all queries
-        console.log('[ORGANIZATIONS] Organization sync complete, refreshing page to load new organization data')
+        console.log('[ORGANIZATIONS] Organization sync complete, refreshing page')
         window.location.reload()
-      }).catch((error) => {
-        console.error('[ORGANIZATIONS] Failed to sync organization:', error)
-        // Still refresh to prevent stale data
+      }).catch(() => {
         window.location.reload()
       })
     }
