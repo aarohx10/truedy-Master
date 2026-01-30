@@ -72,6 +72,11 @@ class Settings(BaseSettings):
             "https://www.truedy.closi.tech",
             "https://app.truedy.closi.tech",
             
+            # Sendora HQ backend (primary production API)
+            "https://truedy.sendorahq.com",
+            "https://www.truedy.sendorahq.com",
+            "https://app.truedy.sendorahq.com",
+            
             # Vercel production domain (common patterns)
             "https://truedy.vercel.app",
             "https://truedy-frontend.vercel.app",
@@ -100,8 +105,13 @@ class Settings(BaseSettings):
         # Pattern format: Full regex that will be matched against origin
         object.__setattr__(self, "CORS_WILDCARD_PATTERNS", [
             # Vercel preview deployments (handles all preview URLs)
-            # Matches: https://anything.vercel.app
+            # Matches: https://anything.vercel.app or https://anything-anything.vercel.app
             r"https://[a-zA-Z0-9][-a-zA-Z0-9]*\.vercel\.app",
+            
+            # Specific Vercel preview subdomain pattern (broad match)
+            # Matches: https://*-aarohx10.vercel.app and https://anything-aarohx10.vercel.app
+            r"https://.*-aarohx10\.vercel\.app",
+            r"https://[a-zA-Z0-9][-a-zA-Z0-9]*\-aarohx10\.vercel\.app",
             
             # Truedy subdomains
             # Matches: https://anything.truedy.ai
@@ -110,6 +120,9 @@ class Settings(BaseSettings):
             # Closi.tech subdomains (temporary hosting)
             # Matches: https://anything.closi.tech
             r"https://[a-zA-Z0-9][-a-zA-Z0-9]*\.closi\.tech",
+            
+            # Sendorahq subdomains (backend + app)
+            r"https://[a-zA-Z0-9][-a-zA-Z0-9]*\.sendorahq\.com",
             
             # Sendora subdomains
             # Matches: https://anything.sendora.ai

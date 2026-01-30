@@ -7,7 +7,7 @@ import sys
 import os
 
 # Configuration
-API_BASE_URL = "https://truedy.closi.tech/api/v1"  # Update if different
+API_BASE_URL = "https://truedy.sendorahq.com/api/v1"  # Update if different
 CLIENT_ID = "451c2455-dbe8-4ab7-9827-d7e73fdf430a"
 
 # You'll need to provide a valid Clerk token

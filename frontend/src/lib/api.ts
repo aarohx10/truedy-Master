@@ -26,31 +26,29 @@ export const queryClient = new QueryClient({
 })
 
 // API Base URL - Backend uses /api/v1 prefix
-// HARD-CODED: No environment variables - everything is hard-coded for reliability
+// Production: truedy.sendorahq.com. Override with NEXT_PUBLIC_API_URL in Vercel if needed.
 
-// Hard-coded production backend URL
-const PRODUCTION_BACKEND_URL = 'https://truedy.closi.tech/api/v1'
-
-// Hard-coded localhost URL for development
+const PRODUCTION_BACKEND_URL = 'https://truedy.sendorahq.com/api/v1'
 const LOCALHOST_BACKEND_URL = 'http://localhost:8000/api/v1'
 
 export const API_URL = (() => {
+  const envUrl = typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL?.trim()
+  if (envUrl) {
+    const base = envUrl.replace(/\/+$/, '')
+    return base.endsWith('/api/v1') ? base : `${base}/api/v1`
+  }
+
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname
-    // Comprehensive check for local development environments
-    const isLocal = 
-      hostname === 'localhost' || 
-      hostname === '127.0.0.1' || 
-      hostname.startsWith('192.168.') || 
+    const isLocal =
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname.startsWith('192.168.') ||
       hostname.startsWith('10.') ||
       hostname.startsWith('172.')
 
-    if (!isLocal) {
-      // Use the hard-coded production backend URL for all cloud/preview deployments
-      return PRODUCTION_BACKEND_URL
-    }
+    if (!isLocal) return PRODUCTION_BACKEND_URL
   }
-  // Default to local backend for development
   return LOCALHOST_BACKEND_URL
 })()
 
@@ -75,6 +73,9 @@ export interface BackendError {
 
 import { debugLogger } from './debug-logger'
 
+// Atomic token refresh: single in-flight refresh, all 401s wait and retry with new token
+let sharedRefreshPromise: Promise<string | null> | null = null
+
 // API Client - Integrated with AuthManager
 class ApiClient {
   private baseUrl: string
@@ -89,15 +90,6 @@ class ApiClient {
     // Token is now managed by authManager
     // This is called by useAuthClient, which also calls authManager.setAuth
     debugLogger.logAuth('SET_TOKEN', 'Token set via apiClient (delegating to authManager)', { tokenLength: token.length })
-  }
-
-  setClientId(clientId: string) {
-    // ClientId is now managed by authManager
-    debugLogger.logAuth('SET_CLIENT_ID', 'Client ID set via apiClient (delegating to authManager)', { clientId })
-  }
-
-  getClientId(): string | null {
-    return authManager.getClientId()
   }
 
   hasToken(): boolean {
@@ -181,30 +173,24 @@ class ApiClient {
         errorName: rawError.name,
       })
 
-      // NEW: Intelligent Network Error Diagnosis
-      // Instead of assuming CORS, we probe the backend
+      // Intelligent Network Error Diagnosis: SSL vs CORS
       const isTypeError = rawError instanceof TypeError
-      
-      if (isTypeError) {
-        // TypeError in fetch usually means:
-        // 1. DNS failure / Wrong IP
-        // 2. SSL Protocol Error (Handshake failed)
-        // 3. True CORS block
-        
-        // We try a simple health check to see if we can reach the server at all
+      if (isTypeError && typeof window !== 'undefined') {
+        const baseOrigin = this.baseUrl.replace(/\/api\/v1\/?$/, '')
+        const healthUrl = `${baseOrigin}/health`
         try {
-          const probe = await fetch(`${this.baseUrl}/health`, { mode: 'no-cors' })
-          // If we reach here, the server is UP, but CORS might be blocking us
+          const probe = await fetch(healthUrl, { mode: 'no-cors' })
+          // Probe completed: backend reachable → treat as CORS/Auth issue
           throw new Error(
-            `CORS Error: The backend is reachable but is not allowing requests from this origin. ` +
-            `Please verify that ${window.location.origin} is in the CORS allowlist.`
+            'CORS/Auth Issue: Backend is reachable but this origin may not be allowed or the request was rejected. ' +
+            `Verify ${window.location.origin} is in the backend CORS allowlist.`
           )
         } catch (probeError) {
-          // If the probe also fails, it's a connection/SSL/DNS issue
+          // Probe failed: SSL, DNS, or server down
+          const healthLink = baseOrigin + '/health'
           throw new Error(
-            `Connection Error: Cannot reach the backend at ${this.baseUrl}. ` +
-            `This is likely an SSL Protocol Error (net::ERR_SSL_PROTOCOL_ERROR) or DNS propagation issue. ` +
-            `Please ensure your DNS is pointing to the correct server IP (5.78.66.173).`
+            'Backend Unreachable (SSL/DNS Issue). The connection failed before CORS could be checked—often net::ERR_SSL_PROTOCOL_ERROR or wrong DNS. ' +
+            `Open ${healthLink} in a new browser tab to verify DNS and SSL; if that tab also fails, fix DNS to point to the backend server and ensure a valid TLS certificate is installed.`
           )
         }
       }
@@ -241,28 +227,20 @@ class ApiClient {
     })
 
     if (!response.ok) {
-      // Handle 401/403 - try to refresh token and retry ONCE
+      // Handle 401/403 - atomic token refresh: one refresh, all waiters reuse it
       if ((response.status === 401 || response.status === 403) && retryCount === 0) {
-        debugLogger.logAuth('TOKEN_EXPIRED', 'Token expired, attempting refresh', {
-          status: response.status,
-          endpoint,
-        })
-        
-        // Try to refresh the token
-        const freshToken = await authManager.refreshToken()
-        
-        if (freshToken) {
-          debugLogger.logAuth('TOKEN_REFRESHED', 'Token refreshed, retrying request', {
-            endpoint,
+        if (!sharedRefreshPromise) {
+          sharedRefreshPromise = authManager.refreshToken().then((token) => {
+            sharedRefreshPromise = null
+            return token
           })
-          // Retry the request with fresh token
+        }
+        const freshToken = await sharedRefreshPromise
+        if (freshToken) {
+          debugLogger.logAuth('TOKEN_REFRESHED', 'Token refreshed, retrying request', { endpoint })
           return this.request<T>(endpoint, options, retryCount + 1)
         }
-        
-        // Refresh failed, throw session expired error
-        debugLogger.logAuth('TOKEN_REFRESH_FAILED', 'Token refresh failed', {
-          endpoint,
-        })
+        debugLogger.logAuth('TOKEN_REFRESH_FAILED', 'Token refresh failed', { endpoint })
         throw new Error('Session expired. Please sign in again.')
       }
       
