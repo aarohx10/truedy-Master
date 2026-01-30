@@ -91,7 +91,7 @@ export function InviteMemberModal({ isOpen, onClose, onSuccess }: InviteMemberMo
     if (!canInvite) {
       toast({
         title: 'Permission denied',
-        description: 'Only workspace admins can invite team members.',
+        description: 'Only organization admins can invite team members.',
         variant: 'destructive',
       })
       return
@@ -102,19 +102,19 @@ export function InviteMemberModal({ isOpen, onClose, onSuccess }: InviteMemberMo
     if (!activeOrg && user && createOrganization) {
       setIsCreatingOrg(true)
       try {
-        const orgName = user.fullName || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'My Workspace'
+        const orgName = user.fullName || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'My Organization'
         activeOrg = await createOrganization({ name: orgName })
         toast({
-          title: 'Workspace created',
-          description: 'Your workspace has been created. Sending invitation...',
+          title: 'Organization created',
+          description: 'Your organization has been created. Sending invitation...',
         })
       } catch (error) {
         const rawError = error instanceof Error ? error : new Error(String(error))
-        const errorMessage = rawError.message || 'Failed to create workspace. Please try again.'
+        const errorMessage = rawError.message || 'Failed to create organization. Please try again.'
         const isOrgFeatureDisabled = errorMessage.includes('organizations feature is not enabled') || 
                                      errorMessage.includes('organizations feature')
         
-        console.error('[INVITE_MEMBER_MODAL] Error creating workspace (RAW ERROR)', {
+        console.error('[INVITE_MEMBER_MODAL] Error creating organization (RAW ERROR)', {
           orgName,
           error: rawError,
           errorMessage: rawError.message,
@@ -126,7 +126,7 @@ export function InviteMemberModal({ isOpen, onClose, onSuccess }: InviteMemberMo
         })
         
         toast({
-          title: 'Error creating workspace',
+          title: 'Error creating organization',
           description: isOrgFeatureDisabled 
             ? 'Organizations feature is not enabled in Clerk. Please enable it in your Clerk Dashboard at https://dashboard.clerk.com'
             : errorMessage,
@@ -143,7 +143,7 @@ export function InviteMemberModal({ isOpen, onClose, onSuccess }: InviteMemberMo
     if (!activeOrg) {
       toast({
         title: 'Error',
-        description: 'No workspace available. Please refresh the page and try again.',
+        description: 'No organization available. Please refresh the page and try again.',
         variant: 'destructive',
       })
       return
@@ -194,10 +194,10 @@ export function InviteMemberModal({ isOpen, onClose, onSuccess }: InviteMemberMo
         <DialogHeader>
           <DialogTitle className="text-lg text-gray-900 dark:text-white">Invite Team Member</DialogTitle>
           <DialogDescription className="text-sm text-gray-600 dark:text-gray-400">
-            Send an invitation to join your workspace. They will receive an email with instructions.
+            Send an invitation to join your organization. They will receive an email with instructions.
             {!canInvite && !checkingPermission && (
               <span className="block mt-2 text-red-500 dark:text-red-400">
-                Only workspace admins can invite team members.
+                Only organization admins can invite team members.
               </span>
             )}
           </DialogDescription>
@@ -247,7 +247,7 @@ export function InviteMemberModal({ isOpen, onClose, onSuccess }: InviteMemberMo
             {isCreatingOrg ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Creating workspace...
+                Creating organization...
               </>
             ) : isInviting ? (
               <>

@@ -37,10 +37,15 @@ async def create_agent(
     if current_user["role"] not in ["client_admin", "agency_admin"]:
         raise ForbiddenError("Insufficient permissions")
     
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
+    
     # Check idempotency key
     if idempotency_key:
         cached = await check_idempotency_key(
-            current_user["client_id"],
+            clerk_org_id,
             idempotency_key,
             request,
             agent_data.dict(),
@@ -53,8 +58,16 @@ async def create_agent(
             )
     
     try:
+        # CRITICAL: Use clerk_org_id for organization-first approach
+        clerk_org_id = current_user.get("clerk_org_id")
+        if not clerk_org_id:
+            raise ValidationError("Missing organization ID in token")
+        
+        # Legacy client_id lookup (for backward compatibility with validation)
         client_id = current_user.get("client_id")
-        db = DatabaseService()
+        
+        # Initialize database service with org_id context
+        db = DatabaseService(org_id=clerk_org_id)
         now = datetime.utcnow()
         
         # Convert Pydantic model to dict
@@ -64,7 +77,8 @@ async def create_agent(
         agent_id = str(uuid.uuid4())
         agent_record = {
             "id": agent_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field - kept for backward compatibility
+            "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
             "name": agent_dict["name"],
             "description": agent_dict.get("description"),
             "voice_id": agent_dict["voice_id"],
@@ -123,7 +137,8 @@ async def create_agent(
         
         # Create in Ultravox FIRST
         try:
-            ultravox_response = await create_agent_ultravox_first(agent_record, client_id)
+            # Pass clerk_org_id to Ultravox for metadata tagging (vital for webhook billing/logging)
+            ultravox_response = await create_agent_ultravox_first(agent_record, client_id, clerk_org_id=clerk_org_id)
             ultravox_agent_id = ultravox_response.get("agentId")
             
             if not ultravox_agent_id:
@@ -157,8 +172,8 @@ async def create_agent(
                 http_status=500,
             )
         
-        # Fetch the created agent
-        created_agent = db.select_one("agents", {"id": agent_id, "client_id": client_id})
+        # Fetch the created agent - filter by org_id to enforce org scoping
+        created_agent = db.select_one("agents", {"id": agent_id, "clerk_org_id": clerk_org_id})
         
         response_data = {
             "data": created_agent,
@@ -171,7 +186,7 @@ async def create_agent(
         # Store idempotency response
         if idempotency_key:
             await store_idempotency_response(
-                current_user["client_id"],
+                clerk_org_id,
                 idempotency_key,
                 request,
                 agent_data.dict(),

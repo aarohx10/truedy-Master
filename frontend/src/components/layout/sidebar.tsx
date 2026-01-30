@@ -166,7 +166,7 @@ export function Sidebar() {
             )}
           </div>
 
-          {/* Workspace Switcher - Top of Sidebar */}
+          {/* Organization Switcher - Top of Sidebar */}
           {(!sidebarCollapsed || mobileMenuOpen) && (
             <div className="px-6 py-3 border-b border-gray-100 dark:border-gray-900">
               <OrganizationSwitcher
@@ -180,6 +180,24 @@ export function Sidebar() {
                 }}
                 afterSelectOrganizationUrl="/dashboard"
                 afterCreateOrganizationUrl="/dashboard"
+                afterSelectOrganization={(org) => {
+                  // CRITICAL: Perform hard refresh when organization switches
+                  // This ensures all queries use the new org_id and clears stale data
+                  console.log('[WORKSPACE_SWITCHER] Organization switched, performing hard refresh', {
+                    orgId: org?.id,
+                    orgName: org?.name
+                  })
+                  // Clear global state
+                  if (typeof window !== 'undefined') {
+                    // Clear React Query cache
+                    const queryClient = (window as any).__REACT_QUERY_CLIENT__
+                    if (queryClient) {
+                      queryClient.clear()
+                    }
+                    // Hard refresh to ensure all data is reloaded with new org context
+                    window.location.href = '/dashboard'
+                  }
+                }}
               />
             </div>
           )}

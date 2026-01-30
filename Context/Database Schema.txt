@@ -4,12 +4,20 @@
     "column_names": "id, email, otp_code, expires_at, used, created_at"
   },
   {
+    "table_name": "agent_assistance_messages",
+    "column_names": "id, session_id, role, content, suggested_prompt_change, approval_state, metadata, created_at"
+  },
+  {
+    "table_name": "agent_assistance_sessions",
+    "column_names": "id, agent_id, client_id, model_id, title, created_at, updated_at"
+  },
+  {
     "table_name": "agent_templates",
     "column_names": "id, name, description, system_prompt, category, is_active, created_at, updated_at"
   },
   {
     "table_name": "agents",
-    "column_names": "id, client_id, ultravox_agent_id, name, description, voice_id, system_prompt, model, tools, knowledge_bases, status, created_at, updated_at, configuration, success_criteria, webhook_url, call_template_name, greeting_settings, inactivity_messages, temperature, language_hint, time_exceeded_message, recording_enabled, join_timeout, max_duration, initial_output_medium, vad_settings, template_id"
+    "column_names": "id, client_id, ultravox_agent_id, name, description, voice_id, system_prompt, model, tools, knowledge_bases, status, created_at, updated_at, configuration, success_criteria, webhook_url, call_template_name, greeting_settings, inactivity_messages, temperature, language_hint, time_exceeded_message, recording_enabled, join_timeout, max_duration, initial_output_medium, vad_settings, template_id, inbound_regex, telephony_provider_id, inbound_phone_number_id, outbound_phone_number_id, clerk_org_id"
   },
   {
     "table_name": "api_keys",
@@ -25,7 +33,7 @@
   },
   {
     "table_name": "calls",
-    "column_names": "id, client_id, agent_id, ultravox_call_id, phone_number, direction, status, context, call_settings, started_at, ended_at, duration_seconds, cost_usd, recording_url, transcript, created_at, updated_at, analysis, provider_latency_ms, is_test, summary, sentiment, is_success, structured_data"
+    "column_names": "id, client_id, agent_id, ultravox_call_id, phone_number, direction, status, context, call_settings, started_at, ended_at, duration_seconds, cost_usd, recording_url, transcript, created_at, updated_at, analysis, provider_latency_ms, is_test, summary, sentiment, is_success, structured_data, clerk_org_id"
   },
   {
     "table_name": "campaign_contacts",
@@ -45,7 +53,7 @@
   },
   {
     "table_name": "contacts",
-    "column_names": "id, client_id, folder_id, first_name, last_name, email, phone_number, metadata, created_at, updated_at"
+    "column_names": "id, client_id, folder_id, first_name, last_name, email, phone_number, metadata, created_at, updated_at, company_name, industry, location, pin_code, keywords"
   },
   {
     "table_name": "credit_transactions",
@@ -64,8 +72,16 @@
     "column_names": "id, client_id, name, description, content, file_name, file_type, file_size, status, ultravox_tool_id, language, created_at, updated_at"
   },
   {
+    "table_name": "phone_numbers",
+    "column_names": "id, organization_id, agent_id, phone_number, provider_id, status, is_trudy_managed, telephony_credential_id, created_at, updated_at, inbound_agent_id, outbound_agent_id"
+  },
+  {
     "table_name": "subscription_tiers",
     "column_names": "id, name, price_usd, minutes_allowance, credits_allowance, stripe_price_id, is_active, created_at"
+  },
+  {
+    "table_name": "telephony_credentials",
+    "column_names": "id, organization_id, provider_type, friendly_name, api_key, account_sid, auth_token, sip_username, sip_password, sip_server, created_at, updated_at"
   },
   {
     "table_name": "tool_logs",
@@ -73,7 +89,7 @@
   },
   {
     "table_name": "tools",
-    "column_names": "id, client_id, ultravox_tool_id, name, description, category, endpoint, method, authentication, parameters, response_schema, status, created_at, updated_at, is_verified, last_test_error"
+    "column_names": "id, client_id, ultravox_tool_id, name, description, category, endpoint, method, authentication, parameters, response_schema, status, created_at, updated_at, is_verified, last_test_error, clerk_org_id"
   },
   {
     "table_name": "users",
@@ -81,7 +97,7 @@
   },
   {
     "table_name": "voices",
-    "column_names": "id, client_id, name, provider, provider_voice_id, type, language, status, training_info, ultravox_voice_id, created_at, updated_at, is_system, metadata, provider_metadata, user_id"
+    "column_names": "id, client_id, name, provider, provider_voice_id, type, language, status, training_info, ultravox_voice_id, created_at, updated_at, is_system, metadata, provider_metadata, user_id, clerk_org_id"
   },
   {
     "table_name": "webhook_deliveries",

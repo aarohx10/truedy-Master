@@ -7,6 +7,10 @@ interface AppState {
   user: User | null
   setUser: (user: User | null) => void
   
+  // Organization (organization-first approach)
+  activeOrgId: string | null
+  setActiveOrgId: (orgId: string | null) => void
+  
   // Workspaces
   currentWorkspace: Workspace | null
   workspaces: Workspace[]
@@ -45,6 +49,20 @@ export const useAppStore = create<AppState>()(
       // User
       user: null,
       setUser: (user) => set({ user }),
+      
+      // Organization (organization-first approach)
+      activeOrgId: null,
+      setActiveOrgId: (orgId) => {
+        set({ activeOrgId: orgId })
+        // Clear all cached data when org changes to prevent stale data
+        if (typeof window !== 'undefined') {
+          // Clear React Query cache
+          const queryClient = (window as any).__REACT_QUERY_CLIENT__
+          if (queryClient) {
+            queryClient.clear()
+          }
+        }
+      },
       
       // Workspaces
       currentWorkspace: null,
@@ -120,6 +138,7 @@ export const useAppStore = create<AppState>()(
     {
       name: 'trudy-app-storage',
       partialize: (state) => ({
+        activeOrgId: state.activeOrgId,
         currentWorkspace: state.currentWorkspace,
         sidebarCollapsed: state.sidebarCollapsed,
         theme: state.theme,

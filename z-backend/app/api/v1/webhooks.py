@@ -136,7 +136,9 @@ async def ultravox_webhook(
         # Continue processing even if logging fails
     
     # Route to appropriate handler (Strategy Pattern)
-    db = DatabaseService()
+    # Use DatabaseAdminService for webhook handlers (no user context)
+    from app.core.database import DatabaseAdminService
+    db = DatabaseAdminService()
     client_id_for_webhook = None
     processing_error = None
     
@@ -192,10 +194,12 @@ async def ultravox_webhook(
         logger.error(f"[WEBHOOKS] [ULTRAVOX] Failed to update webhook log (RAW ERROR): {json.dumps(error_details_raw, indent=2, default=str)}", exc_info=True)
     
     # Trigger egress webhooks
-    if client_id_for_webhook:
+    # CRITICAL: Use org_id for organization-first approach
+    org_id_for_webhook = client_id_for_webhook  # Handler now returns org_id instead of client_id
+    if org_id_for_webhook:
         try:
             await trigger_egress_webhooks(
-                client_id=client_id_for_webhook,
+                org_id=org_id_for_webhook,  # CRITICAL: Organization ID (primary)
                 event_type=event_type,
                 event_data=event_data,
             )
@@ -217,22 +221,31 @@ async def ultravox_webhook(
 
 
 async def trigger_egress_webhooks(
-    client_id: str,
-    event_type: str,
-    event_data: dict,
+    org_id: Optional[str] = None,
+    event_type: str = "",
+    event_data: dict = {},
 ) -> None:
-    """Trigger egress webhooks for a client"""
+    """
+    Trigger egress webhooks for an organization.
+    
+    CRITICAL: Filters by clerk_org_id to trigger webhooks for the organization.
+    Organization-first approach - org_id is required.
+    """
     from app.core.database import DatabaseAdminService
+    
+    if not org_id:
+        logger.warning("[WEBHOOKS] trigger_egress_webhooks called without org_id")
+        return
     
     db = DatabaseAdminService()
     
-    # Get enabled webhook endpoints for this client and event type
+    # CRITICAL: Filter by org_id (organization-first approach)
+    filters = {"enabled": True, "clerk_org_id": org_id}
+    
+    # Get enabled webhook endpoints for this organization and event type
     endpoints = db.select(
         "webhook_endpoints",
-        {
-            "client_id": client_id,
-            "enabled": True,
-        },
+        filters,
     )
     
     # Filter endpoints that subscribe to this event type
@@ -361,7 +374,9 @@ async def telnyx_webhook(
         
         logger.info(f"Received Telnyx webhook: {event_type}")
         
-        db = DatabaseService()
+        # Use DatabaseAdminService for webhook handlers (no user context)
+        from app.core.database import DatabaseAdminService
+        db = DatabaseAdminService()
         
         # Handle Telnyx events (number events, call events, etc.)
         # Implementation details to be defined based on Telnyx webhook requirements
@@ -396,7 +411,15 @@ async def create_webhook_endpoint(
     if current_user["role"] not in ["client_admin", "agency_admin"]:
         raise ForbiddenError("Insufficient permissions")
     
-    db = DatabaseService(current_user["token"])
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
+    
+    client_id = current_user.get("client_id")  # Legacy field
+    
+    # Initialize database service with org_id context
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
     # Generate secret if not provided
@@ -405,7 +428,8 @@ async def create_webhook_endpoint(
     webhook_record = db.insert(
         "webhook_endpoints",
         {
-            "client_id": current_user["client_id"],
+            "client_id": client_id,  # Legacy field
+            "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
             "url": webhook_data.url,
             "event_types": webhook_data.event_types,
             "secret": secret,
@@ -437,10 +461,17 @@ async def list_webhook_endpoints(
     x_client_id: Optional[str] = Header(None),
 ):
     """List webhook endpoints"""
-    db = DatabaseService(current_user["token"])
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
+    
+    # Initialize database service with org_id context
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    webhooks = db.select("webhook_endpoints", {"client_id": current_user["client_id"]})
+    # Filter by org_id instead of client_id
+    webhooks = db.select("webhook_endpoints", {"clerk_org_id": clerk_org_id})
     
     # Don't return secrets
     for wh in webhooks:
@@ -462,10 +493,17 @@ async def get_webhook_endpoint(
     x_client_id: Optional[str] = Header(None),
 ):
     """Get single webhook endpoint"""
-    db = DatabaseService(current_user["token"])
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
+    
+    # Initialize database service with org_id context
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    webhook = db.select_one("webhook_endpoints", {"id": webhook_id, "client_id": current_user["client_id"]})
+    # Filter by org_id instead of client_id
+    webhook = db.select_one("webhook_endpoints", {"id": webhook_id, "clerk_org_id": clerk_org_id})
     if not webhook:
         raise NotFoundError("webhook_endpoint", webhook_id)
     
@@ -492,11 +530,17 @@ async def update_webhook_endpoint(
     if current_user["role"] not in ["client_admin", "agency_admin"]:
         raise ForbiddenError("Insufficient permissions")
     
-    db = DatabaseService(current_user["token"])
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
+    
+    # Initialize database service with org_id context
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    # Check if webhook exists
-    webhook = db.select_one("webhook_endpoints", {"id": webhook_id, "client_id": current_user["client_id"]})
+    # Check if webhook exists - filter by org_id instead of client_id
+    webhook = db.select_one("webhook_endpoints", {"id": webhook_id, "clerk_org_id": clerk_org_id})
     if not webhook:
         raise NotFoundError("webhook_endpoint", webhook_id)
     
@@ -513,12 +557,12 @@ async def update_webhook_endpoint(
             ),
         }
     
-    # Update database
+    # Update database - filter by org_id to enforce org scoping
     update_data["updated_at"] = datetime.utcnow().isoformat()
-    db.update("webhook_endpoints", {"id": webhook_id}, update_data)
+    db.update("webhook_endpoints", {"id": webhook_id, "clerk_org_id": clerk_org_id}, update_data)
     
     # Get updated webhook
-    updated_webhook = db.select_one("webhook_endpoints", {"id": webhook_id, "client_id": current_user["client_id"]})
+    updated_webhook = db.select_one("webhook_endpoints", {"id": webhook_id, "clerk_org_id": clerk_org_id})
     updated_webhook.pop("secret", None)
     
     return {
@@ -540,14 +584,20 @@ async def delete_webhook_endpoint(
     if current_user["role"] not in ["client_admin", "agency_admin"]:
         raise ForbiddenError("Insufficient permissions")
     
-    db = DatabaseService(current_user["token"])
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
+    
+    # Initialize database service with org_id context
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    webhook = db.select_one("webhook_endpoints", {"id": webhook_id})
+    webhook = db.select_one("webhook_endpoints", {"id": webhook_id, "clerk_org_id": clerk_org_id})
     if not webhook:
         raise NotFoundError("webhook_endpoint", webhook_id)
     
-    db.delete("webhook_endpoints", {"id": webhook_id})
+    db.delete("webhook_endpoints", {"id": webhook_id, "clerk_org_id": clerk_org_id})
     
     return {"status": "deleted"}
 

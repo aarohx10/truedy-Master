@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useOrganization } from '@clerk/nextjs'
+import { useOrganization, useAuth } from '@clerk/nextjs'
+import { usePathname, useRouter } from 'next/navigation'
 import { useAppStore } from '@/stores/app-store'
 import { cn } from '@/lib/utils'
 import { Sidebar } from './sidebar'
@@ -12,14 +13,37 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const { sidebarCollapsed, mobileMenuOpen, setMobileMenuOpen, modalOpen, setCurrentWorkspace } = useAppStore()
-  const { organization } = useOrganization()
+  const { organization, isLoaded: orgLoaded } = useOrganization()
+  const { isSignedIn, isLoaded: authLoaded } = useAuth()
+  const pathname = usePathname()
+  const router = useRouter()
+
+  // Client-side: redirect to select-org when signed in but no active org (avoids middleware redirect loop)
+  useEffect(() => {
+    if (!authLoaded || !orgLoaded) return
+    if (!isSignedIn) return
+    if (pathname?.startsWith('/select-org')) return
+    if (!organization) {
+      const redirect = pathname ? `/select-org?redirect=${encodeURIComponent(pathname)}` : '/select-org'
+      router.replace(redirect)
+    }
+  }, [authLoaded, orgLoaded, isSignedIn, organization, pathname, router])
+
+  // Show minimal loading while redirecting to select-org (no org)
+  if (authLoaded && orgLoaded && isSignedIn && !organization) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-white dark:bg-black">
+        <p className="text-sm text-gray-500 dark:text-gray-400">Redirecting to organization selection...</p>
+      </div>
+    )
+  }
 
   // Sync Clerk organization with Zustand workspace store
   useEffect(() => {
     if (organization?.id) {
       setCurrentWorkspace({
         id: organization.id,
-        name: organization.name || 'Workspace',
+        name: organization.name || 'Organization',
         organizationId: organization.id,
         settings: {
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,

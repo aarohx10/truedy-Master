@@ -1,7 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { apiClient, endpoints } from '@/lib/api'
 import { authManager } from '@/lib/auth-manager'
-import { useClientId, useAuthReady } from '@/lib/clerk-auth-client'
+import { useAuthReady } from '@/lib/clerk-auth-client'
+import { useOrganization } from '@clerk/nextjs'
+import { useAppStore } from '@/stores/app-store'
 
 export interface DashboardStats {
   total_calls: number
@@ -20,11 +23,22 @@ export interface DashboardStats {
 }
 
 export function useDashboardStats(timeRange: string = 'last_month') {
-  const clientId = useClientId()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId, setActiveOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
+  
+  // Sync orgId to store when organization changes
+  useEffect(() => {
+    if (organization?.id && organization.id !== activeOrgId) {
+      setActiveOrgId(organization.id)
+    }
+  }, [organization?.id, activeOrgId, setActiveOrgId])
   
   return useQuery({
-    queryKey: ['dashboard', 'stats', clientId, timeRange],
+    queryKey: ['dashboard', 'stats', orgId, timeRange], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       // Wait for auth before fetching
       if (!authManager.hasToken()) {

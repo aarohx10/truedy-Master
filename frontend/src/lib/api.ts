@@ -134,11 +134,10 @@ class ApiClient {
     
     // Get current auth state from authManager
     const token = authManager.getToken()
-    const clientId = authManager.getClientId()
+    // Note: clientId is no longer used - backend extracts org_id from JWT token
     
     debugLogger.logRequest(method, endpoint, {
       hasToken: !!token,
-      hasClientId: !!clientId,
       retryCount,
     })
 
@@ -151,22 +150,10 @@ class ApiClient {
     const requestId = options.headers?.['X-Request-Id'] as string || this.generateRequestId()
     headers['X-Request-Id'] = requestId
 
-    // Add Authorization header
+    // CRITICAL: Add Authorization header - JWT is the only header needed
+    // The backend extracts org_id from the JWT token (organization-first approach)
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
-    }
-
-    // Add x-client-id header (required by backend for non-agency-admin users)
-    if (clientId) {
-      headers['x-client-id'] = clientId
-      // Step 3: Header Logging - Log x-client-id for debugging
-      console.log('[API] Outgoing x-client-id:', clientId)
-    }
-
-    // Add idempotency key for POST/PATCH/PUT requests
-    if (['POST', 'PATCH', 'PUT'].includes(options.method || '')) {
-      const idempotencyKey = options.headers?.['X-Idempotency-Key'] as string || this.generateIdempotencyKey()
-      headers['X-Idempotency-Key'] = idempotencyKey
     }
 
     let response: Response
@@ -176,9 +163,7 @@ class ApiClient {
         headers,
       })
     } catch (error) {
-      clearTimeout(timeoutId)
-      
-      // Handle network errors (CORS, connection refused, timeout, etc.)
+      // Handle network errors (CORS, connection refused, timeout, SSL, etc.)
       const rawError = error instanceof Error ? error : new Error(String(error))
       const errorMessage = rawError.message || 'Network error'
       
@@ -187,71 +172,42 @@ class ApiClient {
         throw new Error(`Request timeout after ${timeout / 1000}s. ${isImportEndpoint ? 'Large file imports may take longer. Please try again or use a smaller file.' : ''}`)
       }
       
-      // Log RAW network error
+      // Log RAW network error for developers
       console.error('[API_REQUEST] Network error (RAW)', {
         url,
         method,
         endpoint,
-        error: rawError,
         errorMessage: rawError.message,
-        errorStack: rawError.stack,
         errorName: rawError.name,
-        errorCause: (rawError as any).cause,
-        fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
-        currentOrigin: typeof window !== 'undefined' ? window.location.origin : 'unknown',
-        backendUrl: this.baseUrl,
       })
+
+      // NEW: Intelligent Network Error Diagnosis
+      // Instead of assuming CORS, we probe the backend
+      const isTypeError = rawError instanceof TypeError
       
-      // Comprehensive CORS error detection
-      const isCorsError = 
-        errorMessage.includes('Failed to fetch') || 
-        errorMessage.includes('NetworkError') ||
-        errorMessage.includes('CORS') ||
-        errorMessage.includes('Cross-Origin') ||
-        errorMessage.includes('blocked by CORS policy') ||
-        errorMessage.includes('No \'Access-Control-Allow-Origin\'') ||
-        errorMessage.includes('ERR_FAILED') ||
-        errorMessage.includes('TypeError: Failed to fetch')
-      
-      // Get current origin for diagnostics
-      const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'unknown'
-      
-      if (isCorsError) {
-        // Log detailed CORS error info
-        console.error('[CORS ERROR] Request blocked by CORS policy (RAW)', {
-          url,
-          method,
-          endpoint,
-          currentOrigin,
-          backendUrl: this.baseUrl,
-          error: rawError,
-          errorMessage: rawError.message,
-          errorStack: rawError.stack,
-          fullErrorObject: JSON.stringify(rawError, Object.getOwnPropertyNames(rawError), 2),
-          suggestion: 'The backend needs to allow this origin in its CORS configuration',
-        })
+      if (isTypeError) {
+        // TypeError in fetch usually means:
+        // 1. DNS failure / Wrong IP
+        // 2. SSL Protocol Error (Handshake failed)
+        // 3. True CORS block
         
-        debugLogger.logCors(url, false, 'network_error', {
-          error: errorMessage,
-          method,
-          endpoint,
-          origin: currentOrigin,
-        })
-        
-        // Provide actionable error message
-        const corsError = new Error(
-          `CORS Error: The backend at ${this.baseUrl} is not allowing requests from ${currentOrigin}. ` +
-          `This is a backend configuration issue. ` +
-          `Please ensure the origin "${currentOrigin}" is added to the backend's CORS allowed origins.`
-        )
-        throw corsError
+        // We try a simple health check to see if we can reach the server at all
+        try {
+          const probe = await fetch(`${this.baseUrl}/health`, { mode: 'no-cors' })
+          // If we reach here, the server is UP, but CORS might be blocking us
+          throw new Error(
+            `CORS Error: The backend is reachable but is not allowing requests from this origin. ` +
+            `Please verify that ${window.location.origin} is in the CORS allowlist.`
+          )
+        } catch (probeError) {
+          // If the probe also fails, it's a connection/SSL/DNS issue
+          throw new Error(
+            `Connection Error: Cannot reach the backend at ${this.baseUrl}. ` +
+            `This is likely an SSL Protocol Error (net::ERR_SSL_PROTOCOL_ERROR) or DNS propagation issue. ` +
+            `Please ensure your DNS is pointing to the correct server IP (5.78.66.173).`
+          )
+        }
       }
-      
-      debugLogger.logError('API_REQUEST', rawError, {
-        method,
-        endpoint,
-        url,
-      })
       
       throw new Error(`Network request failed: ${errorMessage}`)
     }
@@ -271,7 +227,7 @@ class ApiClient {
           url,
           status: response.status,
           responseData,
-          clientId: clientId || 'missing',
+          // Note: clientId removed - backend uses org_id from JWT token
         })
         // Don't throw here - let the calling code handle empty arrays
         // But log it clearly for debugging
@@ -448,7 +404,6 @@ class ApiClient {
 
   async getAudioBlob(endpoint: string): Promise<Blob> {
     const token = authManager.getToken()
-    const clientId = authManager.getClientId()
     
     const headers: Record<string, string> = {}
 
@@ -459,9 +414,7 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${token}`
     }
 
-    if (clientId) {
-      headers['x-client-id'] = clientId
-    }
+    // REMOVED: x-client-id header - backend extracts org_id from JWT token
 
     const url = `${this.baseUrl}${endpoint}`
     console.log('Fetching audio blob from:', url)
@@ -533,7 +486,6 @@ class ApiClient {
   async upload<T>(endpoint: string, formData: FormData): Promise<BackendResponse<T>> {
     const startTime = performance.now()
     const token = authManager.getToken()
-    const clientId = authManager.getClientId()
     const url = `${this.baseUrl}${endpoint}`
     
     console.log('[API_UPLOAD] ===== UPLOAD REQUEST START =====')
@@ -542,7 +494,6 @@ class ApiClient {
       url,
       baseUrl: this.baseUrl,
       hasToken: !!token,
-      hasClientId: !!clientId,
       formDataKeys: Array.from(formData.keys()),
     })
     
@@ -579,10 +530,7 @@ class ApiClient {
       console.warn('[API_UPLOAD] ⚠️ No token available!')
     }
 
-    if (clientId) {
-      headers['x-client-id'] = clientId
-      console.log('[API_UPLOAD] x-client-id header added', { clientId })
-    }
+    // REMOVED: x-client-id header - backend extracts org_id from JWT token
 
     // CRITICAL: Do NOT set Content-Type header - browser must set it with boundary
     console.log('[API_UPLOAD] Headers prepared (Content-Type will be set by browser)', {

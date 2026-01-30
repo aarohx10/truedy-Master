@@ -11,7 +11,7 @@ import io
 
 from app.core.auth import get_current_user
 from app.core.database import DatabaseService
-from app.core.exceptions import ForbiddenError
+from app.core.exceptions import ForbiddenError, ValidationError
 from app.models.schemas import ResponseMeta
 
 router = APIRouter()
@@ -29,11 +29,17 @@ async def export_calls(
     if current_user["role"] not in ["client_admin", "agency_admin"]:
         raise ForbiddenError("Insufficient permissions")
     
-    db = DatabaseService(current_user["token"])
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
+    
+    # Initialize database service with org_id context
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    # Build filters
-    filters = {"client_id": current_user["client_id"]}
+    # Build filters - filter by org_id instead of client_id
+    filters = {"clerk_org_id": clerk_org_id}
     if status:
         filters["status"] = status
     
@@ -136,11 +142,17 @@ async def export_campaigns(
     if current_user["role"] not in ["client_admin", "agency_admin"]:
         raise ForbiddenError("Insufficient permissions")
     
-    db = DatabaseService(current_user["token"])
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
+    
+    # Initialize database service with org_id context
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    # Build filters
-    filters = {"client_id": current_user["client_id"]}
+    # Build filters - filter by org_id instead of client_id
+    filters = {"clerk_org_id": clerk_org_id}
     if status:
         filters["status"] = status
     

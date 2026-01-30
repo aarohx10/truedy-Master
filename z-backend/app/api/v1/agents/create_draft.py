@@ -30,14 +30,21 @@ async def create_draft_agent(
         raise ForbiddenError("Insufficient permissions")
     
     try:
-        client_id = current_user.get("client_id")
-        db = DatabaseService()
+        # CRITICAL: Use clerk_org_id for organization-first approach
+        clerk_org_id = current_user.get("clerk_org_id")
+        if not clerk_org_id:
+            raise ValidationError("Missing organization ID in token")
+        
+        client_id = current_user.get("client_id")  # Legacy field
+        
+        # Initialize database service with org_id context
+        db = DatabaseService(org_id=clerk_org_id)
         now = datetime.utcnow()
         template_id = payload.get("template_id")
         
         # 1. Get a default voice (try to find one, otherwise use a placeholder or handle later)
-        # We try to find ANY voice for this client to set as default
-        voices = db.select("voices", {"client_id": client_id}, order_by="created_at DESC")
+        # We try to find ANY voice for this organization to set as default
+        voices = db.select("voices", {"clerk_org_id": clerk_org_id}, order_by="created_at DESC")
         default_voice_id = None
         if voices:
             default_voice_id = voices[0]["id"]
@@ -61,7 +68,8 @@ async def create_draft_agent(
         # Note: Some fields require migration 015_expand_agents_table.sql to be run
         agent_record = {
             "id": agent_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
             "name": name,
             "description": template.get("description") if template else "Draft agent",
             "voice_id": default_voice_id,  # None if no voice available - user must select voice
@@ -135,8 +143,8 @@ async def create_draft_agent(
                 error_msg = "; ".join(validation_result["errors"])
                 raise ValidationError(f"Agent validation failed: {error_msg}")
         
-        # Fetch the created agent
-        created_agent = db.select_one("agents", {"id": agent_id, "client_id": client_id})
+        # Fetch the created agent - filter by org_id instead of client_id
+        created_agent = db.select_one("agents", {"id": agent_id, "clerk_org_id": clerk_org_id})
         
         if not created_agent:
             raise ValidationError(f"Failed to retrieve created agent: {agent_id}")

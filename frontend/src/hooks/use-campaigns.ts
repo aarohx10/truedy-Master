@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { apiClient, endpoints } from '@/lib/api'
 import { authManager } from '@/lib/auth-manager'
 import {
@@ -7,14 +8,27 @@ import {
   UpdateCampaignData,
   CampaignStats,
 } from '@/types'
-import { useClientId, useAuthReady } from '@/lib/clerk-auth-client'
+import { useAuthReady } from '@/lib/clerk-auth-client'
+import { useOrganization } from '@clerk/nextjs'
+import { useAppStore } from '@/stores/app-store'
 
 export function useCampaigns() {
-  const clientId = useClientId()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId, setActiveOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
+  
+  // Sync orgId to store when organization changes
+  useEffect(() => {
+    if (organization?.id && organization.id !== activeOrgId) {
+      setActiveOrgId(organization.id)
+    }
+  }, [organization?.id, activeOrgId, setActiveOrgId])
   
   return useQuery({
-    queryKey: ['campaigns', clientId],
+    queryKey: ['campaigns', orgId], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       // Wait for auth before fetching
       if (!authManager.hasToken()) {
@@ -48,11 +62,15 @@ export function useCampaigns() {
 }
 
 export function useCampaign(id: string) {
-  const clientId = useClientId()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
   
   return useQuery({
-    queryKey: ['campaigns', clientId, id],
+    queryKey: ['campaigns', orgId, id], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       // Wait for auth before fetching
       if (!authManager.hasToken()) {
@@ -79,7 +97,11 @@ export function useCampaign(id: string) {
 
 export function useCreateCampaign() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
 
   return useMutation({
     mutationFn: async (data: CreateCampaignData) => {
@@ -98,14 +120,18 @@ export function useCreateCampaign() {
       return response.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['campaigns', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['campaigns', orgId] })
     },
   })
 }
 
 export function useUpdateCampaign() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
 
   return useMutation({
     mutationFn: async ({ id, data }: { id: string; data: UpdateCampaignData }) => {
@@ -124,15 +150,19 @@ export function useUpdateCampaign() {
       return response.data
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['campaigns', clientId] })
-      queryClient.invalidateQueries({ queryKey: ['campaigns', clientId, data.id] })
+      queryClient.invalidateQueries({ queryKey: ['campaigns', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['campaigns', orgId, data.id] })
     },
   })
 }
 
 export function useDeleteCampaign() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
 
   return useMutation({
     mutationFn: async (id: string) => {
@@ -147,7 +177,7 @@ export function useDeleteCampaign() {
       await apiClient.delete(endpoints.campaigns.delete(id))
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['campaigns', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['campaigns', orgId] })
     },
   })
 }

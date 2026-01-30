@@ -277,7 +277,7 @@ export default function DashboardPage() {
         {/* Page Header */}
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="min-w-0">
-            <p className="text-sm text-gray-600 dark:text-gray-400">My Workspace</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400">My Organization</p>
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
               {getGreeting()}, {getFirstName()}
             </h1>

@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { apiClient, endpoints } from '@/lib/api'
 import { authManager } from '@/lib/auth-manager'
 import { 
@@ -11,14 +12,29 @@ import {
   AgentAIAssistResponse,
 } from '@/types'
 import { useAuthClient, useClientId, useAuthReady } from '@/lib/clerk-auth-client'
+import { useOrganization } from '@clerk/nextjs'
+import { useAppStore } from '@/stores/app-store'
 
 // Fetch all agents
 export function useAgents() {
-  const { clientId, isLoading: authLoading } = useAuthClient()
+  const { isLoading: authLoading } = useAuthClient()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId, setActiveOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  // If orgId is null (personal workspace), use user_id as org_id
+  const orgId = organization?.id || activeOrgId
+  
+  // Sync orgId to store when organization changes
+  useEffect(() => {
+    if (organization?.id && organization.id !== activeOrgId) {
+      setActiveOrgId(organization.id)
+    }
+  }, [organization?.id, activeOrgId, setActiveOrgId])
   
   return useQuery<Agent[]>({
-    queryKey: ['agents', clientId],
+    queryKey: ['agents', orgId], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       const response = await apiClient.get<Agent[]>(endpoints.agents.list)
       const data = response.data
@@ -32,11 +48,16 @@ export function useAgents() {
 
 // Fetch single agent
 export function useAgent(id: string) {
-  const { clientId, isLoading: authLoading } = useAuthClient()
+  const { isLoading: authLoading } = useAuthClient()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
   
   return useQuery<Agent>({
-    queryKey: ['agents', clientId, id],
+    queryKey: ['agents', orgId, id], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       const response = await apiClient.get<Agent>(endpoints.agents.get(id))
       return response.data
@@ -48,7 +69,9 @@ export function useAgent(id: string) {
 // Create agent mutation
 export function useCreateAgent() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async (data: CreateAgentData) => {
@@ -59,7 +82,7 @@ export function useCreateAgent() {
       return response.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['agents', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['agents', orgId] })
     },
   })
 }
@@ -67,7 +90,9 @@ export function useCreateAgent() {
 // Create draft agent mutation
 export function useCreateDraftAgent() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async (templateId?: string) => {
@@ -78,7 +103,7 @@ export function useCreateDraftAgent() {
       return response.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['agents', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['agents', orgId] })
     },
   })
 }
@@ -86,7 +111,9 @@ export function useCreateDraftAgent() {
 // Update agent mutation
 export function useUpdateAgent() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async ({ id, data }: { id: string; data: UpdateAgentData }) => {
@@ -97,8 +124,8 @@ export function useUpdateAgent() {
       return response.data
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['agents', clientId] })
-      queryClient.invalidateQueries({ queryKey: ['agents', clientId, variables.id] })
+      queryClient.invalidateQueries({ queryKey: ['agents', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['agents', orgId, variables.id] })
     },
   })
 }
@@ -106,7 +133,9 @@ export function useUpdateAgent() {
 // Partial update agent mutation (for auto-save)
 export function usePartialUpdateAgent() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async ({ id, data }: { id: string; data: UpdateAgentData }) => {
@@ -117,8 +146,8 @@ export function usePartialUpdateAgent() {
       return response.data
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['agents', clientId] })
-      queryClient.invalidateQueries({ queryKey: ['agents', clientId, variables.id] })
+      queryClient.invalidateQueries({ queryKey: ['agents', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['agents', orgId, variables.id] })
     },
   })
 }
@@ -126,7 +155,9 @@ export function usePartialUpdateAgent() {
 // Delete agent mutation
 export function useDeleteAgent() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async (id: string) => {
@@ -134,7 +165,7 @@ export function useDeleteAgent() {
       return id
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['agents', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['agents', orgId] })
     },
   })
 }
@@ -142,7 +173,9 @@ export function useDeleteAgent() {
 // Sync agent with Ultravox mutation
 export function useSyncAgent() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async (id: string) => {
@@ -152,8 +185,8 @@ export function useSyncAgent() {
       return response.data
     },
     onSuccess: (_, agentId) => {
-      queryClient.invalidateQueries({ queryKey: ['agents', clientId] })
-      queryClient.invalidateQueries({ queryKey: ['agents', clientId, agentId] })
+      queryClient.invalidateQueries({ queryKey: ['agents', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['agents', orgId, agentId] })
     },
   })
 }

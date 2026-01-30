@@ -7,22 +7,28 @@ import { Label } from '@/components/ui/label'
 import { CreditCard } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient, endpoints } from '@/lib/api'
-import { useClientId, useAuthReady } from '@/lib/clerk-auth-client'
+import { useAuthReady } from '@/lib/clerk-auth-client'
 import { useToast } from '@/hooks/use-toast'
+import { useOrganization } from '@clerk/nextjs'
+import { useAppStore } from '@/stores/app-store'
 
 export default function BillingPage() {
   const { toast } = useToast()
-  const clientId = useClientId()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId, setActiveOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
 
-  // Fetch client data for credits
+  // CRITICAL: Fetch subscription status for the Organization, not the individual user
   const { data: clientData } = useQuery({
-    queryKey: ['client', clientId],
+    queryKey: ['client', 'billing', orgId], // Include orgId in query key
     queryFn: async () => {
       const response = await apiClient.get(endpoints.auth.me)
       return response.data
     },
-    enabled: isAuthReady && !!clientId,
+    enabled: isAuthReady && !!orgId,
   })
 
   const creditsBalance = clientData?.credits_balance || 0

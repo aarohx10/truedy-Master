@@ -42,6 +42,7 @@ export default function SignInPage() {
         path="/signin"
         signUpUrl="/signup"
         fallbackRedirectUrl="/dashboard"
+        forceRedirectUrl="/dashboard"
       />
     </div>
   )

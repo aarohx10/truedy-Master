@@ -21,17 +21,17 @@ export function WorkspaceSwitcher() {
       <DropdownMenuTrigger asChild>
         <Button variant="outline" className="w-[200px] justify-between border-gray-300 dark:border-gray-800 shadow-sm hover:shadow">
           <span className="truncate font-semibold text-gray-900 dark:text-white">
-            {currentWorkspace?.name || 'Select Workspace'}
+            {currentWorkspace?.name || 'Select organization'}
           </span>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-gray-400 dark:text-gray-500" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-[200px] bg-white dark:bg-black border-gray-200 dark:border-gray-900 shadow-lg">
-        <DropdownMenuLabel className="text-gray-900 dark:text-white">Workspaces</DropdownMenuLabel>
+        <DropdownMenuLabel className="text-gray-900 dark:text-white">Organizations</DropdownMenuLabel>
         <DropdownMenuSeparator className="bg-gray-200 dark:bg-gray-900" />
         {workspaces.length === 0 ? (
           <div className="p-2 text-sm text-gray-500 dark:text-gray-500">
-            No workspaces available
+            No organizations available
           </div>
         ) : (
           workspaces.map((workspace) => (
@@ -55,7 +55,7 @@ export function WorkspaceSwitcher() {
         <DropdownMenuSeparator className="bg-gray-200 dark:bg-gray-900" />
         <DropdownMenuItem className="text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900 hover:text-gray-900 dark:hover:text-white">
           <Plus className="mr-2 h-4 w-4" />
-          <span>Create Workspace</span>
+          <span>Create organization</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

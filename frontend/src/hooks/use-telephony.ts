@@ -194,7 +194,11 @@ export function usePhoneNumbers() {
 export function useAssignNumber() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
 
   return useMutation({
     mutationFn: async (request: NumberAssignmentRequest) => {
@@ -202,8 +206,8 @@ export function useAssignNumber() {
       return response.data
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['phone-numbers', clientId] })
-      queryClient.invalidateQueries({ queryKey: ['agents', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['phone-numbers', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['agents', orgId] })
       queryClient.invalidateQueries({ queryKey: ['agent-numbers', variables.agent_id] })
       toast({
         title: 'Number assigned',

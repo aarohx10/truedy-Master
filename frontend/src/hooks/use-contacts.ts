@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { apiClient, endpoints, API_URL } from '@/lib/api'
 import { authManager } from '@/lib/auth-manager'
 import {
@@ -11,15 +12,29 @@ import {
   ContactImportResponse,
 } from '@/types'
 import { useAuthClient, useClientId, useAuthReady } from '@/lib/clerk-auth-client'
+import { useOrganization } from '@clerk/nextjs'
+import { useAppStore } from '@/stores/app-store'
 
 // Contact Folders
 
 export function useContactFolders() {
-  const { clientId, isLoading: authLoading } = useAuthClient()
+  const { isLoading: authLoading } = useAuthClient()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId, setActiveOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
+  
+  // Sync orgId to store when organization changes
+  useEffect(() => {
+    if (organization?.id && organization.id !== activeOrgId) {
+      setActiveOrgId(organization.id)
+    }
+  }, [organization?.id, activeOrgId, setActiveOrgId])
   
   return useQuery<ContactFolder[]>({
-    queryKey: ['contact-folders', clientId],
+    queryKey: ['contact-folders', orgId], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       // Step 2: Bypass Level Check - Log raw response for debugging
       const response = await apiClient.get<any>(endpoints.contacts.listFolders)
@@ -38,8 +53,8 @@ export function useContactFolders() {
       
       return finalData
     },
-    // Step 2: Strict Query Enabling - Require clientId to prevent fetching before auth is ready
-    enabled: !authLoading && isAuthReady && !!clientId && authManager.hasToken(),
+    // Step 2: Strict Query Enabling - Require orgId to prevent fetching before auth is ready
+    enabled: !authLoading && isAuthReady && !!orgId && authManager.hasToken(),
     // Step 2: Remove Stale Cache - Kill any "empty" persistent caches
     staleTime: 0,
     gcTime: 0,
@@ -48,7 +63,9 @@ export function useContactFolders() {
 
 export function useCreateContactFolder() {
   const queryClient = useQueryClient()
-  const { clientId } = useAuthClient()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async (data: CreateContactFolderData) => {
@@ -60,11 +77,11 @@ export function useCreateContactFolder() {
     },
     onSuccess: () => {
       // Step 2: Invalidation Logic - Use exact queryKey pattern to force immediate refresh
-      if (clientId) {
-        queryClient.invalidateQueries({ queryKey: ['contact-folders', clientId] })
-        queryClient.refetchQueries({ queryKey: ['contact-folders', clientId] })
+      if (orgId) {
+        queryClient.invalidateQueries({ queryKey: ['contact-folders', orgId] })
+        queryClient.refetchQueries({ queryKey: ['contact-folders', orgId] })
       } else {
-        // Fallback: invalidate all if clientId not available
+        // Fallback: invalidate all if orgId not available
         queryClient.invalidateQueries({ queryKey: ['contact-folders'] })
       }
     },
@@ -74,11 +91,16 @@ export function useCreateContactFolder() {
 // Contacts
 
 export function useContacts(folderId?: string, page: number = 1, limit: number = 50) {
-  const { clientId, isLoading: authLoading } = useAuthClient()
+  const { isLoading: authLoading } = useAuthClient()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
   
   return useQuery<{ contacts: Contact[]; pagination: { total: number; pages: number; page: number; limit: number } }>({
-    queryKey: ['contacts', clientId, folderId, page, limit],
+    queryKey: ['contacts', orgId, folderId, page, limit], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       if (!folderId) return { contacts: [], pagination: { total: 0, pages: 0, page: 1, limit } }
       
@@ -121,7 +143,9 @@ export function useContacts(folderId?: string, page: number = 1, limit: number =
 
 export function useCreateContact() {
   const queryClient = useQueryClient()
-  const { clientId } = useAuthClient()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async (data: CreateContactData) => {
@@ -132,15 +156,17 @@ export function useCreateContact() {
       return response.data.data
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['contacts', clientId, variables.folder_id] })
-      queryClient.invalidateQueries({ queryKey: ['contact-folders', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['contacts', orgId, variables.folder_id] })
+      queryClient.invalidateQueries({ queryKey: ['contact-folders', orgId] })
     },
   })
 }
 
 export function useUpdateContact() {
   const queryClient = useQueryClient()
-  const { clientId } = useAuthClient()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async ({ id, data }: { id: string; data: UpdateContactData }) => {
@@ -151,15 +177,17 @@ export function useUpdateContact() {
       return response.data.data
     },
     onSuccess: (updatedContact) => {
-      queryClient.invalidateQueries({ queryKey: ['contacts', clientId, updatedContact.folder_id] })
-      queryClient.invalidateQueries({ queryKey: ['contact-folders', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['contacts', orgId, updatedContact.folder_id] })
+      queryClient.invalidateQueries({ queryKey: ['contact-folders', orgId] })
     },
   })
 }
 
 export function useDeleteContact() {
   const queryClient = useQueryClient()
-  const { clientId } = useAuthClient()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async ({ id, folderId }: { id: string; folderId?: string }) => {
@@ -169,11 +197,11 @@ export function useDeleteContact() {
     onSuccess: (_, variables) => {
       if (variables.folderId) {
         // Invalidate all pages for this folder
-        queryClient.invalidateQueries({ queryKey: ['contacts', clientId, variables.folderId] })
+        queryClient.invalidateQueries({ queryKey: ['contacts', orgId, variables.folderId] })
       } else {
-        queryClient.invalidateQueries({ queryKey: ['contacts', clientId] })
+        queryClient.invalidateQueries({ queryKey: ['contacts', orgId] })
       }
-      queryClient.invalidateQueries({ queryKey: ['contact-folders', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['contact-folders', orgId] })
     },
   })
 }
@@ -182,7 +210,9 @@ export function useDeleteContact() {
 
 export function useImportContacts() {
   const queryClient = useQueryClient()
-  const { clientId } = useAuthClient()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async (data: ContactImportRequest) => {
@@ -193,14 +223,16 @@ export function useImportContacts() {
       return response.data.data
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['contacts', clientId, variables.folder_id] })
-      queryClient.invalidateQueries({ queryKey: ['contact-folders', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['contacts', orgId, variables.folder_id] })
+      queryClient.invalidateQueries({ queryKey: ['contact-folders', orgId] })
     },
   })
 }
 
 export function useExportContacts() {
-  const { clientId } = useAuthClient()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async (folderId?: string) => {
@@ -215,7 +247,7 @@ export function useExportContacts() {
       const response = await fetch(`${API_URL}${url}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
-          'x-client-id': clientId || '',
+          // REMOVED: x-client-id header - no longer needed (backend uses org_id from JWT)
         },
       })
       

@@ -82,21 +82,28 @@ async def extract_and_store_content(
         raise
 
 
-async def get_knowledge_base_content(kb_id: str, client_id: Optional[str] = None) -> str:
+async def get_knowledge_base_content(kb_id: str, org_id: Optional[str] = None, client_id: Optional[str] = None) -> str:
     """
     Fetch content from knowledge_bases table.
     
     Args:
         kb_id: Knowledge base UUID
-        client_id: Optional client ID for ownership validation (if None, skips validation)
+        org_id: Organization ID for scoping (organization-first approach)
+        client_id: Optional client ID for backward compatibility (deprecated)
     
     Returns:
         Plain text content
     """
     try:
-        db = DatabaseService()
+        # CRITICAL: Use org_id for organization-first approach
+        db = DatabaseService(org_id=org_id) if org_id else DatabaseService()
         filters = {"id": kb_id}
-        if client_id:
+        
+        # Filter by org_id if provided (preferred)
+        if org_id:
+            filters["clerk_org_id"] = org_id
+        elif client_id:
+            # Fallback to client_id for backward compatibility
             filters["client_id"] = client_id
         
         kb_record = db.select_one("knowledge_bases", filters)
@@ -115,26 +122,37 @@ async def get_knowledge_base_content(kb_id: str, client_id: Optional[str] = None
         raise
 
 
-async def update_knowledge_base_content(kb_id: str, client_id: str, new_content: str) -> bool:
+async def update_knowledge_base_content(kb_id: str, org_id: Optional[str] = None, client_id: Optional[str] = None, new_content: str = "") -> bool:
     """
     Update content field in knowledge_bases table.
     
     Args:
         kb_id: Knowledge base UUID
-        client_id: Client UUID for ownership validation
+        org_id: Organization ID for ownership validation (organization-first approach)
+        client_id: Optional client ID for backward compatibility (deprecated)
         new_content: New text content
     
     Returns:
         True if successful
     """
     try:
-        db = DatabaseService()
+        # CRITICAL: Use org_id for organization-first approach
+        db = DatabaseService(org_id=org_id) if org_id else DatabaseService()
         update_data = {
             "content": new_content,
             "updated_at": datetime.utcnow().isoformat(),
         }
         
-        result = db.update("knowledge_bases", {"id": kb_id, "client_id": client_id}, update_data)
+        # Filter by org_id if provided (preferred), otherwise fallback to client_id
+        filters = {"id": kb_id}
+        if org_id:
+            filters["clerk_org_id"] = org_id
+        elif client_id:
+            filters["client_id"] = client_id
+        else:
+            raise ValueError("Either org_id or client_id must be provided")
+        
+        result = db.update("knowledge_bases", filters, update_data)
         
         if not result:
             raise ValueError(f"Failed to update knowledge base: {kb_id}")

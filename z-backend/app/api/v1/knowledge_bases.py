@@ -87,7 +87,12 @@ async def create_knowledge_base(
     Validates file, extracts text, stores in database, and creates Ultravox tool.
     """
     try:
-        client_id = current_user.get("client_id")
+        # CRITICAL: Use clerk_org_id for organization-first approach
+        clerk_org_id = current_user.get("clerk_org_id")
+        if not clerk_org_id:
+            raise ValidationError("Missing organization ID in token")
+        
+        client_id = current_user.get("client_id")  # Legacy field
         
         if current_user["role"] not in ["client_admin", "agency_admin"]:
             raise ForbiddenError("Insufficient permissions")
@@ -138,10 +143,12 @@ async def create_knowledge_base(
         kb_id = str(uuid.uuid4())
         now = datetime.utcnow()
         
-        db = DatabaseService()
+        # Initialize database service with org_id context
+        db = DatabaseService(org_id=clerk_org_id)
         kb_record = {
             "id": kb_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
             "name": name,
             "description": request_data.description,
             "language": "en-US",
@@ -162,12 +169,12 @@ async def create_knowledge_base(
                 temp_file.write(file_content)
                 temp_file_path = temp_file.name
             
-            # Extract text and store content
+            # Extract text and store content (pass org_id)
             extracted_text = await extract_and_store_content(
                 file_path=temp_file_path,
                 file_type=file_type,
                 kb_id=kb_id,
-                client_id=client_id,
+                client_id=clerk_org_id,  # Pass org_id as client_id for backward compatibility
                 file_name=request_data.file.filename,
                 file_size=file_size
             )
@@ -179,8 +186,8 @@ async def create_knowledge_base(
             except Exception as tool_error:
                 logger.warning(f"[KB] Failed to create Ultravox tool (non-critical): {tool_error}", exc_info=True)
             
-            # Fetch updated record
-            updated_kb = db.select_one("knowledge_bases", {"id": kb_id, "client_id": client_id})
+            # Fetch updated record - filter by org_id to enforce org scoping
+            updated_kb = db.select_one("knowledge_bases", {"id": kb_id, "clerk_org_id": clerk_org_id})
             
             return {
                 "data": updated_kb,
@@ -219,12 +226,22 @@ async def list_knowledge_bases(
     current_user: dict = Depends(get_current_user),
     x_client_id: Optional[str] = Header(None),
 ):
-    """List all knowledge bases for current client"""
+    """
+    List all knowledge bases for current organization.
+    
+    CRITICAL: Filters by clerk_org_id to show shared knowledge bases across the team.
+    """
     try:
-        client_id = current_user.get("client_id")
-        db = DatabaseService()
+        # CRITICAL: Use clerk_org_id for organization-first approach
+        clerk_org_id = current_user.get("clerk_org_id")
+        if not clerk_org_id:
+            raise ValidationError("Missing organization ID in token")
         
-        kb_list = db.select("knowledge_bases", {"client_id": client_id}, order_by="created_at DESC")
+        # Initialize database service with org_id context
+        db = DatabaseService(org_id=clerk_org_id)
+        
+        # Filter by org_id instead of client_id - shows all organization knowledge bases
+        kb_list = db.select("knowledge_bases", {"clerk_org_id": clerk_org_id}, order_by="created_at DESC")
         
         return {
             "data": list(kb_list),
@@ -253,10 +270,16 @@ async def get_knowledge_base(
 ):
     """Get single knowledge base with content"""
     try:
-        client_id = current_user.get("client_id")
-        db = DatabaseService()
+        # CRITICAL: Use clerk_org_id for organization-first approach
+        clerk_org_id = current_user.get("clerk_org_id")
+        if not clerk_org_id:
+            raise ValidationError("Missing organization ID in token")
         
-        kb_record = db.select_one("knowledge_bases", {"id": kb_id, "client_id": client_id})
+        # Initialize database service with org_id context
+        db = DatabaseService(org_id=clerk_org_id)
+        
+        # Filter by org_id instead of client_id
+        kb_record = db.select_one("knowledge_bases", {"id": kb_id, "clerk_org_id": clerk_org_id})
         
         if not kb_record:
             raise NotFoundError("knowledge_base", kb_id)
@@ -291,11 +314,16 @@ async def update_knowledge_base(
 ):
     """Update knowledge base (name, description, or content)"""
     try:
-        client_id = current_user.get("client_id")
-        db = DatabaseService()
+        # CRITICAL: Use clerk_org_id for organization-first approach
+        clerk_org_id = current_user.get("clerk_org_id")
+        if not clerk_org_id:
+            raise ValidationError("Missing organization ID in token")
         
-        # Verify KB exists and belongs to client
-        kb_record = db.select_one("knowledge_bases", {"id": kb_id, "client_id": client_id})
+        # Initialize database service with org_id context
+        db = DatabaseService(org_id=clerk_org_id)
+        
+        # Verify KB exists and belongs to organization - filter by org_id instead of client_id
+        kb_record = db.select_one("knowledge_bases", {"id": kb_id, "clerk_org_id": clerk_org_id})
         if not kb_record:
             raise NotFoundError("knowledge_base", kb_id)
         
@@ -308,15 +336,15 @@ async def update_knowledge_base(
         
         # Update content separately using service function (handles its own DB update)
         if "content" in request_data:
-            await update_knowledge_base_content(kb_id, client_id, request_data["content"])
+            await update_knowledge_base_content(kb_id, org_id=clerk_org_id, new_content=request_data["content"])
         
         # Update other fields (name, description) if provided
         if update_data:
             update_data["updated_at"] = datetime.utcnow().isoformat()
-            db.update("knowledge_bases", {"id": kb_id, "client_id": client_id}, update_data)
+            db.update("knowledge_bases", {"id": kb_id, "clerk_org_id": clerk_org_id}, update_data)
         
-        # Fetch updated record
-        updated_kb = db.select_one("knowledge_bases", {"id": kb_id, "client_id": client_id})
+        # Fetch updated record - filter by org_id instead of client_id
+        updated_kb = db.select_one("knowledge_bases", {"id": kb_id, "clerk_org_id": clerk_org_id})
         
         return {
             "data": updated_kb,
@@ -347,11 +375,16 @@ async def delete_knowledge_base(
 ):
     """Delete knowledge base and associated Ultravox tool"""
     try:
-        client_id = current_user.get("client_id")
-        db = DatabaseService()
+        # CRITICAL: Use clerk_org_id for organization-first approach
+        clerk_org_id = current_user.get("clerk_org_id")
+        if not clerk_org_id:
+            raise ValidationError("Missing organization ID in token")
         
-        # Get KB record to check for Ultravox tool
-        kb_record = db.select_one("knowledge_bases", {"id": kb_id, "client_id": client_id})
+        # Initialize database service with org_id context
+        db = DatabaseService(org_id=clerk_org_id)
+        
+        # Get KB record to check for Ultravox tool - filter by org_id instead of client_id
+        kb_record = db.select_one("knowledge_bases", {"id": kb_id, "clerk_org_id": clerk_org_id})
         if not kb_record:
             raise NotFoundError("knowledge_base", kb_id)
         
@@ -364,8 +397,8 @@ async def delete_knowledge_base(
             except Exception as tool_error:
                 logger.warning(f"[KB] Failed to delete Ultravox tool (non-critical): {tool_error}", exc_info=True)
         
-        # Delete KB record
-        db.delete("knowledge_bases", {"id": kb_id, "client_id": client_id})
+        # Delete KB record - filter by org_id instead of client_id
+        db.delete("knowledge_bases", {"id": kb_id, "clerk_org_id": clerk_org_id})
         
         return {
             "data": {"success": True},

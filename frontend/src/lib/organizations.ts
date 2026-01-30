@@ -70,7 +70,7 @@ export function useOrganizationSync() {
       syncOrganization().then(() => {
         // Force a page refresh to ensure all queries use the new client_id
         // This is more reliable than invalidating all queries
-        console.log('[ORGANIZATIONS] Organization sync complete, refreshing page to load new workspace data')
+        console.log('[ORGANIZATIONS] Organization sync complete, refreshing page to load new organization data')
         window.location.reload()
       }).catch((error) => {
         console.error('[ORGANIZATIONS] Failed to sync organization:', error)

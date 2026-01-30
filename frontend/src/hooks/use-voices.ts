@@ -1,24 +1,41 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { apiClient, endpoints } from '@/lib/api'
 import { authManager } from '@/lib/auth-manager'
 import { Voice } from '@/types'
 import { useAuthClient, useClientId, useAuthReady } from '@/lib/clerk-auth-client'
+import { useOrganization } from '@clerk/nextjs'
+import { useAppStore } from '@/stores/app-store'
 
 /**
  * Simplified hook for fetching voices from the API
  * Direct data fetching from Supabase backend only
+ * 
+ * CRITICAL: Shows system_voices + organization_voices (all voices available to the team)
  */
 export function useVoices(source?: 'ultravox' | 'custom') {
-  const { clientId, isLoading: authLoading } = useAuthClient()
+  const { isLoading: authLoading } = useAuthClient()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId, setActiveOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
+  
+  // Sync orgId to store when organization changes
+  useEffect(() => {
+    if (organization?.id && organization.id !== activeOrgId) {
+      setActiveOrgId(organization.id)
+    }
+  }, [organization?.id, activeOrgId, setActiveOrgId])
   
   return useQuery({
-    queryKey: ['voices', clientId, source],
+    queryKey: ['voices', orgId, source], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       const url = source ? `${endpoints.voices.list}?source=${source}` : endpoints.voices.list
       
       console.log('[USE_VOICES] Fetching voices', {
-        clientId,
+        orgId,
         source,
         url,
         isAuthReady,
@@ -29,7 +46,7 @@ export function useVoices(source?: 'ultravox' | 'custom') {
         const response = await apiClient.get<Voice[]>(url)
         
         console.log('[USE_VOICES] Voices fetched successfully (RAW RESPONSE)', {
-          clientId,
+          orgId,
           source,
           url,
           response,
@@ -42,7 +59,7 @@ export function useVoices(source?: 'ultravox' | 'custom') {
       } catch (error) {
         const rawError = error instanceof Error ? error : new Error(String(error))
         console.error('[USE_VOICES] Failed to fetch voices (RAW ERROR)', {
-          clientId,
+          orgId,
           source,
           url,
           error: rawError,
@@ -78,12 +95,14 @@ export function useMyVoices() {
 }
 
 export function useVoice(id: string) {
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   const isAuthReady = useAuthReady()
   const { isLoading: authLoading } = useAuthClient()
   
   return useQuery({
-    queryKey: ['voices', clientId, id],
+    queryKey: ['voices', orgId, id], // CRITICAL: Use orgId instead of clientId
     queryFn: async () => {
       const response = await apiClient.get<Voice>(endpoints.voices.get(id))
       return response.data
@@ -94,7 +113,9 @@ export function useVoice(id: string) {
 
 export function useCreateVoice() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
 
   return useMutation({
     mutationFn: async (data: {
@@ -114,7 +135,7 @@ export function useCreateVoice() {
       }
     }) => {
       console.log('[USE_CREATE_VOICE] Starting voice creation', {
-        clientId,
+        orgId,
         data,
         fullData: JSON.stringify(data, null, 2),
         endpoint: endpoints.voices.create,
@@ -124,7 +145,7 @@ export function useCreateVoice() {
         const response = await apiClient.post<Voice>(endpoints.voices.create, data)
         
         console.log('[USE_CREATE_VOICE] Voice creation successful (RAW RESPONSE)', {
-          clientId,
+          orgId,
           response,
           responseData: response.data,
           fullResponse: JSON.stringify(response, null, 2),
@@ -134,7 +155,7 @@ export function useCreateVoice() {
       } catch (error) {
         const rawError = error instanceof Error ? error : new Error(String(error))
         console.error('[USE_CREATE_VOICE] Voice creation failed (RAW ERROR)', {
-          clientId,
+          orgId,
           data,
           error: rawError,
           errorMessage: rawError.message,
@@ -146,38 +167,42 @@ export function useCreateVoice() {
       }
     },
     onSuccess: (newVoice) => {
-      queryClient.setQueryData<Voice[]>(['voices', clientId, 'custom'], (oldVoices = []) => {
+      queryClient.setQueryData<Voice[]>(['voices', orgId, 'custom'], (oldVoices = []) => {
         const exists = oldVoices.some(voice => voice.id === newVoice.id)
         if (exists) {
           return oldVoices.map(voice => voice.id === newVoice.id ? newVoice : voice)
         }
         return [newVoice, ...oldVoices]
       })
-      queryClient.refetchQueries({ queryKey: ['voices', clientId, 'custom'] })
+      queryClient.refetchQueries({ queryKey: ['voices', orgId, 'custom'] })
     },
   })
 }
 
 export function useDeleteVoice() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
 
   return useMutation({
     mutationFn: async (id: string) => {
       await apiClient.delete(endpoints.voices.delete(id))
     },
     onSuccess: (_, deletedId) => {
-      queryClient.setQueryData<Voice[]>(['voices', clientId, 'custom'], (oldVoices = []) => {
+      queryClient.setQueryData<Voice[]>(['voices', orgId, 'custom'], (oldVoices = []) => {
         return oldVoices.filter(voice => voice.id !== deletedId)
       })
-      queryClient.refetchQueries({ queryKey: ['voices', clientId, 'custom'] })
+      queryClient.refetchQueries({ queryKey: ['voices', orgId, 'custom'] })
     },
   })
 }
 
 export function useSyncVoiceWithUltravox() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
 
   return useMutation({
     mutationFn: async (id: string) => {
@@ -185,8 +210,8 @@ export function useSyncVoiceWithUltravox() {
       return response.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['voices', clientId, 'ultravox'] })
-      queryClient.invalidateQueries({ queryKey: ['voices', clientId, 'custom'] })
+      queryClient.invalidateQueries({ queryKey: ['voices', orgId, 'ultravox'] })
+      queryClient.invalidateQueries({ queryKey: ['voices', orgId, 'custom'] })
     },
   })
 }

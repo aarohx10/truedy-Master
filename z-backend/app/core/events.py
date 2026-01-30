@@ -59,13 +59,14 @@ async def publish_event(
 
 
 # Convenience functions for common event types (keep same API)
-async def emit_voice_training_started(voice_id: str, client_id: str, ultravox_voice_id: str) -> bool:
+async def emit_voice_training_started(voice_id: str, client_id: Optional[str] = None, org_id: Optional[str] = None, ultravox_voice_id: str = "") -> bool:
     """Emit voice.training.started event"""
     return await publish_event(
         "voice.training.started",
         {
             "voice_id": voice_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "org_id": org_id,  # CRITICAL: Organization ID
             "ultravox_voice_id": ultravox_voice_id,
             "status": "training",
             "timestamp": datetime.utcnow().isoformat(),
@@ -73,13 +74,14 @@ async def emit_voice_training_started(voice_id: str, client_id: str, ultravox_vo
     )
 
 
-async def emit_voice_training_completed(voice_id: str, client_id: str, ultravox_voice_id: str) -> bool:
+async def emit_voice_training_completed(voice_id: str, client_id: Optional[str] = None, org_id: Optional[str] = None, ultravox_voice_id: str = "") -> bool:
     """Emit voice.training.completed event"""
     return await publish_event(
         "voice.training.completed",
         {
             "voice_id": voice_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "org_id": org_id,  # CRITICAL: Organization ID
             "ultravox_voice_id": ultravox_voice_id,
             "status": "active",
             "timestamp": datetime.utcnow().isoformat(),
@@ -87,13 +89,14 @@ async def emit_voice_training_completed(voice_id: str, client_id: str, ultravox_
     )
 
 
-async def emit_voice_training_failed(voice_id: str, client_id: str, ultravox_voice_id: str, error_message: str) -> bool:
+async def emit_voice_training_failed(voice_id: str, client_id: Optional[str] = None, org_id: Optional[str] = None, ultravox_voice_id: str = "", error_message: str = "") -> bool:
     """Emit voice.training.failed event"""
     return await publish_event(
         "voice.training.failed",
         {
             "voice_id": voice_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "org_id": org_id,  # CRITICAL: Organization ID
             "ultravox_voice_id": ultravox_voice_id,
             "status": "failed",
             "error_message": error_message,
@@ -102,26 +105,38 @@ async def emit_voice_training_failed(voice_id: str, client_id: str, ultravox_voi
     )
 
 
-async def emit_voice_created(voice_id: str, client_id: str, ultravox_voice_id: str) -> bool:
+async def emit_voice_created(voice_id: str, client_id: Optional[str] = None, org_id: Optional[str] = None, ultravox_voice_id: str = "") -> bool:
     """Emit voice.created event"""
     return await publish_event(
         "voice.created",
         {
             "voice_id": voice_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "org_id": org_id,  # CRITICAL: Organization ID
             "ultravox_voice_id": ultravox_voice_id,
             "timestamp": datetime.utcnow().isoformat(),
         },
     )
 
 
-async def emit_call_created(call_id: str, client_id: str, ultravox_call_id: str, phone_number: str, direction: str) -> bool:
-    """Emit call.created event"""
+async def emit_call_created(call_id: str, client_id: Optional[str] = None, org_id: Optional[str] = None, ultravox_call_id: str = "", phone_number: str = "", direction: str = "") -> bool:
+    """
+    Emit call.created event
+    
+    Args:
+        call_id: Call UUID
+        client_id: Legacy client ID (deprecated)
+        org_id: Organization ID (organization-first approach)
+        ultravox_call_id: Ultravox call ID
+        phone_number: Phone number
+        direction: Call direction (inbound/outbound)
+    """
     return await publish_event(
         "call.created",
         {
             "call_id": call_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "org_id": org_id,  # Organization ID
             "ultravox_call_id": ultravox_call_id,
             "phone_number": phone_number,
             "direction": direction,
@@ -131,26 +146,28 @@ async def emit_call_created(call_id: str, client_id: str, ultravox_call_id: str,
     )
 
 
-async def emit_call_started(call_id: str, client_id: str) -> bool:
+async def emit_call_started(call_id: str, client_id: Optional[str] = None, org_id: Optional[str] = None) -> bool:
     """Emit call.started event"""
     return await publish_event(
         "call.started",
         {
             "call_id": call_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "org_id": org_id,  # CRITICAL: Organization ID
             "status": "in_progress",
             "timestamp": datetime.utcnow().isoformat(),
         },
     )
 
 
-async def emit_call_completed(call_id: str, client_id: str, duration_seconds: Optional[int] = None, cost_usd: Optional[float] = None) -> bool:
+async def emit_call_completed(call_id: str, client_id: Optional[str] = None, org_id: Optional[str] = None, duration_seconds: Optional[int] = None, cost_usd: Optional[float] = None) -> bool:
     """Emit call.completed event"""
     return await publish_event(
         "call.completed",
         {
             "call_id": call_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "org_id": org_id,  # CRITICAL: Organization ID
             "status": "completed",
             "duration_seconds": duration_seconds,
             "cost_usd": cost_usd,
@@ -159,13 +176,14 @@ async def emit_call_completed(call_id: str, client_id: str, duration_seconds: Op
     )
 
 
-async def emit_call_failed(call_id: str, client_id: str, error_message: Optional[str] = None) -> bool:
+async def emit_call_failed(call_id: str, client_id: Optional[str] = None, org_id: Optional[str] = None, error_message: Optional[str] = None) -> bool:
     """Emit call.failed event"""
     return await publish_event(
         "call.failed",
         {
             "call_id": call_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "org_id": org_id,  # CRITICAL: Organization ID
             "status": "failed",
             "error_message": error_message,
             "timestamp": datetime.utcnow().isoformat(),
@@ -173,13 +191,22 @@ async def emit_call_failed(call_id: str, client_id: str, error_message: Optional
     )
 
 
-async def emit_campaign_created(campaign_id: str, client_id: str, name: str) -> bool:
-    """Emit campaign.created event"""
+async def emit_campaign_created(campaign_id: str, client_id: Optional[str] = None, org_id: Optional[str] = None, name: str = "") -> bool:
+    """
+    Emit campaign.created event
+    
+    Args:
+        campaign_id: Campaign UUID
+        client_id: Legacy client ID (deprecated)
+        org_id: Organization ID (organization-first approach)
+        name: Campaign name
+    """
     return await publish_event(
         "campaign.created",
         {
             "campaign_id": campaign_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "org_id": org_id,  # CRITICAL: Organization ID
             "name": name,
             "status": "draft",
             "timestamp": datetime.utcnow().isoformat(),
@@ -187,29 +214,31 @@ async def emit_campaign_created(campaign_id: str, client_id: str, name: str) -> 
     )
 
 
-async def emit_campaign_scheduled(campaign_id: str, client_id: str, scheduled_at: str, contact_count: int, batch_ids: list) -> bool:
+async def emit_campaign_scheduled(campaign_id: str, client_id: Optional[str] = None, org_id: Optional[str] = None, scheduled_at: str = "", contact_count: int = 0, batch_ids: list = None) -> bool:
     """Emit campaign.scheduled event"""
     return await publish_event(
         "campaign.scheduled",
         {
             "campaign_id": campaign_id,
-            "client_id": client_id,
+            "client_id": client_id,  # Legacy field
+            "org_id": org_id,  # CRITICAL: Organization ID
             "scheduled_at": scheduled_at,
             "contact_count": contact_count,
-            "batch_ids": batch_ids,
+            "batch_ids": batch_ids or [],
             "timestamp": datetime.utcnow().isoformat(),
         },
     )
 
 
-async def emit_campaign_completed(campaign_id: str, client_id: str, stats: Dict[str, int]) -> bool:
+async def emit_campaign_completed(campaign_id: str, client_id: Optional[str] = None, org_id: Optional[str] = None, stats: Dict[str, int] = None) -> bool:
     """Emit campaign.completed event"""
     return await publish_event(
         "campaign.completed",
         {
             "campaign_id": campaign_id,
-            "client_id": client_id,
-            "stats": stats,
+            "client_id": client_id,  # Legacy field
+            "org_id": org_id,  # CRITICAL: Organization ID
+            "stats": stats or {},
             "timestamp": datetime.utcnow().isoformat(),
         },
     )

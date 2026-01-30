@@ -22,11 +22,10 @@ export default function TeamPage() {
           <div className="flex flex-col items-center justify-center py-12">
             <Users className="h-12 w-12 text-gray-400 dark:text-gray-600 mb-4" />
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-              No Workspace Found
+              No organization found
             </h3>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4 text-center max-w-md">
-              A workspace will be created automatically when you create your first organization.
-              Use the workspace switcher in the sidebar to create one.
+              An organization will be created when you use the organization switcher in the sidebar to create one.
             </p>
           </div>
         ) : (

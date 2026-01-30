@@ -1,7 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { apiClient, endpoints } from '@/lib/api'
 import { authManager } from '@/lib/auth-manager'
 import { useClientId, useAuthReady } from '@/lib/clerk-auth-client'
+import { useOrganization } from '@clerk/nextjs'
+import { useAppStore } from '@/stores/app-store'
 
 export interface Call {
   id: string
@@ -37,11 +40,23 @@ export function useCalls(params?: {
   limit?: number
   offset?: number
 }) {
-  const clientId = useClientId()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId, setActiveOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  // If orgId is null (personal workspace), use user_id as org_id
+  const orgId = organization?.id || activeOrgId
+  
+  // Sync orgId to store when organization changes
+  useEffect(() => {
+    if (organization?.id && organization.id !== activeOrgId) {
+      setActiveOrgId(organization.id)
+    }
+  }, [organization?.id, activeOrgId, setActiveOrgId])
   
   return useQuery({
-    queryKey: ['calls', clientId, params],
+    queryKey: ['calls', orgId, params], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       // Wait for auth before fetching
       if (!authManager.hasToken()) {
@@ -80,11 +95,15 @@ export function useCalls(params?: {
 }
 
 export function useCall(callId: string, refresh?: boolean) {
-  const clientId = useClientId()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
   
   return useQuery({
-    queryKey: ['calls', clientId, callId, refresh],
+    queryKey: ['calls', orgId, callId, refresh], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       // Wait for auth before fetching
       if (!authManager.hasToken()) {
@@ -110,7 +129,9 @@ export function useCall(callId: string, refresh?: boolean) {
 
 export function useCreateCall() {
   const queryClient = useQueryClient()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
 
   return useMutation({
     mutationFn: async (data: CreateCallData) => {
@@ -126,17 +147,19 @@ export function useCreateCall() {
       return response.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['calls', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['calls', orgId] })
     },
   })
 }
 
 export function useCallTranscript(callId: string) {
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   const isAuthReady = useAuthReady()
   
   return useQuery({
-    queryKey: ['calls', clientId, callId, 'transcript'],
+    queryKey: ['calls', orgId, callId, 'transcript'], // CRITICAL: Use orgId instead of clientId
     queryFn: async () => {
       // Wait for auth before fetching
       if (!authManager.hasToken()) {
@@ -160,11 +183,13 @@ export function useCallTranscript(callId: string) {
 }
 
 export function useCallRecording(callId: string) {
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  const orgId = organization?.id || activeOrgId
   const isAuthReady = useAuthReady()
   
   return useQuery({
-    queryKey: ['calls', clientId, callId, 'recording'],
+    queryKey: ['calls', orgId, callId, 'recording'], // CRITICAL: Use orgId instead of clientId
     queryFn: async () => {
       // Wait for auth before fetching
       if (!authManager.hasToken()) {

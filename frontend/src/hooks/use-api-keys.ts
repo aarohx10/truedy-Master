@@ -1,7 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { apiClient, endpoints } from '@/lib/api'
 import { useToast } from '@/hooks/use-toast'
-import { useAuthReady, useClientId } from '@/lib/clerk-auth-client'
+import { useAuthReady } from '@/lib/clerk-auth-client'
+import { useOrganization } from '@clerk/nextjs'
+import { useAppStore } from '@/stores/app-store'
 
 export interface ApiKey {
   id: string
@@ -19,19 +22,32 @@ export interface CreateApiKeyData {
 }
 
 /**
- * Hook to fetch all API keys for the current client
+ * Hook to fetch all API keys for the current organization.
+ * 
+ * CRITICAL: API keys are per Organization, not per User.
  */
 export function useApiKeys() {
-  const clientId = useClientId()
   const isAuthReady = useAuthReady()
+  const { organization } = useOrganization()
+  const { activeOrgId, setActiveOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
+  
+  // Sync orgId to store when organization changes
+  useEffect(() => {
+    if (organization?.id && organization.id !== activeOrgId) {
+      setActiveOrgId(organization.id)
+    }
+  }, [organization?.id, activeOrgId, setActiveOrgId])
 
   return useQuery<ApiKey[]>({
-    queryKey: ['api-keys', clientId],
+    queryKey: ['api-keys', orgId], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       const response = await apiClient.get<ApiKey[]>(endpoints.apiKeys.list)
       return response.data
     },
-    enabled: isAuthReady && !!clientId,
+    enabled: isAuthReady && !!orgId,
   })
 }
 
@@ -41,7 +57,11 @@ export function useApiKeys() {
 export function useCreateApiKey() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
 
   return useMutation({
     mutationFn: async (data: CreateApiKeyData) => {
@@ -49,7 +69,7 @@ export function useCreateApiKey() {
       return response.data
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['api-keys', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['api-keys', orgId] })
       toast({
         title: 'API Key created',
         description: `API key "${data.key_name}" has been created successfully.`,
@@ -71,7 +91,11 @@ export function useCreateApiKey() {
 export function useDeleteApiKey() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const clientId = useClientId()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
 
   return useMutation({
     mutationFn: async (apiKeyId: string) => {
@@ -79,7 +103,7 @@ export function useDeleteApiKey() {
       return response.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['api-keys', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['api-keys', orgId] })
       toast({
         title: 'API Key deleted',
         description: 'API key has been deleted successfully.',

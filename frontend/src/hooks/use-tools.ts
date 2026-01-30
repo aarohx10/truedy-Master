@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient, endpoints } from '@/lib/api'
+import { useOrganization } from '@clerk/nextjs'
+import { useAppStore } from '@/stores/app-store'
 
 // Tool type matching backend schema
 export interface Tool {
@@ -61,8 +63,14 @@ export interface UpdateToolData {
 
 // Fetch all tools
 export function useTools() {
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
+  
   return useQuery<Tool[]>({
-    queryKey: ['tools'],
+    queryKey: ['tools', orgId], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       const response = await apiClient.get<Tool[]>(endpoints.tools.list)
       // Backend returns { data: Tool[], meta: {...} }
@@ -75,8 +83,14 @@ export function useTools() {
 
 // Fetch single tool
 export function useTool(id: string) {
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
+  
   return useQuery<Tool>({
-    queryKey: ['tools', id],
+    queryKey: ['tools', orgId, id], // CRITICAL: Include orgId in query key
     queryFn: async () => {
       const response = await apiClient.get<Tool>(endpoints.tools.get(id))
       // Backend returns { data: Tool, meta: {...} }
@@ -89,6 +103,11 @@ export function useTool(id: string) {
 // Create tool mutation
 export function useCreateTool() {
   const queryClient = useQueryClient()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async (data: CreateToolData) => {
@@ -100,7 +119,7 @@ export function useCreateTool() {
       return response.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tools'] })
+      queryClient.invalidateQueries({ queryKey: ['tools', orgId] })
     },
   })
 }
@@ -108,6 +127,11 @@ export function useCreateTool() {
 // Update tool mutation
 export function useUpdateTool() {
   const queryClient = useQueryClient()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async ({ id, data }: { id: string; data: UpdateToolData }) => {
@@ -119,8 +143,8 @@ export function useUpdateTool() {
       return response.data
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['tools'] })
-      queryClient.invalidateQueries({ queryKey: ['tools', variables.id] })
+      queryClient.invalidateQueries({ queryKey: ['tools', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['tools', orgId, variables.id] })
     },
   })
 }
@@ -128,6 +152,11 @@ export function useUpdateTool() {
 // Delete tool mutation
 export function useDeleteTool() {
   const queryClient = useQueryClient()
+  const { organization } = useOrganization()
+  const { activeOrgId } = useAppStore()
+  
+  // CRITICAL: Use orgId for organization-first approach
+  const orgId = organization?.id || activeOrgId
   
   return useMutation({
     mutationFn: async (id: string) => {
@@ -135,7 +164,7 @@ export function useDeleteTool() {
       return id
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tools'] })
+      queryClient.invalidateQueries({ queryKey: ['tools', orgId] })
     },
   })
 }
