@@ -1,7 +1,11 @@
+'use client'
+
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient, endpoints } from '@/lib/api'
 import { useToast } from '@/hooks/use-toast'
-import { useAuthReady, useClientId } from '@/lib/clerk-auth-client'
+import { useAuthReady, useAuthClient } from '@/lib/clerk-auth-client'
+import { useOrganization } from '@clerk/nextjs'
+import { useAppStore } from '@/stores/app-store'
 
 export interface PhoneNumber {
   id: string
@@ -116,7 +120,7 @@ export function useSearchNumbers() {
 export function usePurchaseNumber() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const clientId = useClientId()
+  const { orgId } = useAuthClient()
 
   return useMutation({
     mutationFn: async (request: NumberPurchaseRequest) => {
@@ -124,7 +128,7 @@ export function usePurchaseNumber() {
       return response.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['phone-numbers', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['phone-numbers', orgId] })
       toast({
         title: 'Number purchased',
         description: 'Phone number has been purchased successfully.',
@@ -146,7 +150,7 @@ export function usePurchaseNumber() {
 export function useImportNumber() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const clientId = useClientId()
+  const { orgId } = useAuthClient()
 
   return useMutation({
     mutationFn: async (request: NumberImportRequest) => {
@@ -154,8 +158,8 @@ export function useImportNumber() {
       return response.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['phone-numbers', clientId] })
-      queryClient.invalidateQueries({ queryKey: ['telephony-credentials', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['phone-numbers', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['telephony-credentials', orgId] })
       toast({
         title: 'Number imported',
         description: 'Phone number has been imported successfully.',
@@ -175,16 +179,16 @@ export function useImportNumber() {
  * Hook to list all phone numbers
  */
 export function usePhoneNumbers() {
-  const clientId = useClientId()
+  const { orgId } = useAuthClient()
   const isAuthReady = useAuthReady()
 
   return useQuery<PhoneNumber[]>({
-    queryKey: ['phone-numbers', clientId],
+    queryKey: ['phone-numbers', orgId],
     queryFn: async () => {
       const response = await apiClient.get<PhoneNumber[]>(endpoints.telephony.list)
       return response.data
     },
-    enabled: isAuthReady && !!clientId,
+    enabled: isAuthReady && !!orgId,
   })
 }
 
@@ -230,7 +234,7 @@ export function useAssignNumber() {
 export function useUnassignNumber() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const clientId = useClientId()
+  const { orgId } = useAuthClient()
 
   return useMutation({
     mutationFn: async ({ number_id, assignment_type }: { number_id: string; assignment_type: 'inbound' | 'outbound' }) => {
@@ -241,8 +245,8 @@ export function useUnassignNumber() {
       return response.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['phone-numbers', clientId] })
-      queryClient.invalidateQueries({ queryKey: ['agents', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['phone-numbers', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['agents', orgId] })
       toast({
         title: 'Number unassigned',
         description: 'Phone number has been unassigned successfully.',
@@ -262,18 +266,18 @@ export function useUnassignNumber() {
  * Hook to get phone numbers assigned to an agent
  */
 export function useGetAgentNumbers(agentId: string) {
-  const clientId = useClientId()
+  const { orgId } = useAuthClient()
   const isAuthReady = useAuthReady()
 
   return useQuery<{ inbound: PhoneNumber[]; outbound: PhoneNumber[] }>({
-    queryKey: ['agent-numbers', agentId, clientId],
+    queryKey: ['agent-numbers', agentId, orgId],
     queryFn: async () => {
       const response = await apiClient.get<{ inbound: PhoneNumber[]; outbound: PhoneNumber[] }>(
         `/telephony/agents/${agentId}/numbers`
       )
       return response.data
     },
-    enabled: isAuthReady && !!clientId && !!agentId,
+    enabled: isAuthReady && !!orgId && !!agentId,
   })
 }
 
@@ -281,18 +285,18 @@ export function useGetAgentNumbers(agentId: string) {
  * Hook to get webhook URL for an agent (for BYOC setup)
  */
 export function useGetAgentWebhookUrl(agentId: string) {
-  const clientId = useClientId()
+  const { orgId } = useAuthClient()
   const isAuthReady = useAuthReady()
 
   return useQuery<{ webhook_url: string; agent_id: string; ultravox_agent_id: string }>({
-    queryKey: ['agent-webhook-url', agentId, clientId],
+    queryKey: ['agent-webhook-url', agentId, orgId],
     queryFn: async () => {
       const response = await apiClient.get<{ webhook_url: string; agent_id: string; ultravox_agent_id: string }>(
         `/telephony/agents/${agentId}/webhook-url`
       )
       return response.data
     },
-    enabled: isAuthReady && !!clientId && !!agentId,
+    enabled: isAuthReady && !!orgId && !!agentId,
   })
 }
 
@@ -300,15 +304,15 @@ export function useGetAgentWebhookUrl(agentId: string) {
  * Hook to list telephony credentials
  */
 export function useTelephonyCredentials() {
-  const clientId = useClientId()
+  const { orgId } = useAuthClient()
   const isAuthReady = useAuthReady()
 
   return useQuery<TelephonyCredential[]>({
-    queryKey: ['telephony-credentials', clientId],
+    queryKey: ['telephony-credentials', orgId],
     queryFn: async () => {
       const response = await apiClient.get<TelephonyCredential[]>(endpoints.telephony.credentials)
       return response.data
     },
-    enabled: isAuthReady && !!clientId,
+    enabled: isAuthReady && !!orgId,
   })
 }

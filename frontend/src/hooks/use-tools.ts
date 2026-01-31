@@ -1,3 +1,5 @@
+'use client'
+
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient, endpoints } from '@/lib/api'
 import { useOrganization } from '@clerk/nextjs'
@@ -6,7 +8,6 @@ import { useAppStore } from '@/stores/app-store'
 // Tool type matching backend schema
 export interface Tool {
   id: string
-  client_id: string
   ultravox_tool_id?: string
   name: string
   description?: string

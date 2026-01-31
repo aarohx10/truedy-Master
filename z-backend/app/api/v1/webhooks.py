@@ -12,6 +12,7 @@ import logging
 import time
 
 from app.core.auth import get_current_user
+from app.core.permissions import require_admin_role
 from app.core.database import DatabaseService, DatabaseAdminService
 from app.core.config import settings
 from app.core.webhooks import verify_ultravox_signature, verify_timestamp, verify_telnyx_signature, deliver_webhook
@@ -195,7 +196,7 @@ async def ultravox_webhook(
     
     # Trigger egress webhooks
     # CRITICAL: Use org_id for organization-first approach
-    org_id_for_webhook = client_id_for_webhook  # Handler now returns org_id instead of client_id
+    org_id_for_webhook = client_id_for_webhook  # Handler returns org_id (variable name kept for backward compatibility)
     if org_id_for_webhook:
         try:
             await trigger_egress_webhooks(
@@ -404,19 +405,28 @@ async def telnyx_webhook(
 @router.post("")
 async def create_webhook_endpoint(
     webhook_data: WebhookEndpointCreate,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Create webhook endpoint"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
+    
+    # STEP 1: Explicit validation BEFORE creating webhook_record
+    logger.info(f"[WEBHOOKS] [CREATE] [STEP 1] Extracting clerk_org_id from current_user | clerk_org_id={clerk_org_id}")
+    
     if not clerk_org_id:
+        logger.error(f"[WEBHOOKS] [CREATE] [ERROR] Missing clerk_org_id in current_user | current_user_keys={list(current_user.keys())}")
         raise ValidationError("Missing organization ID in token")
     
-    client_id = current_user.get("client_id")  # Legacy field
+    # Strip whitespace and validate it's not empty
+    clerk_org_id = str(clerk_org_id).strip()
+    if not clerk_org_id:
+        logger.error(f"[WEBHOOKS] [CREATE] [ERROR] clerk_org_id is empty after stripping | original_value={current_user.get('clerk_org_id')}")
+        raise ValidationError("Organization ID cannot be empty")
+    
+    logger.info(f"[WEBHOOKS] [CREATE] [STEP 2] ✅ clerk_org_id validated | clerk_org_id={clerk_org_id}")
     
     # Initialize database service with org_id context
     db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
@@ -425,23 +435,54 @@ async def create_webhook_endpoint(
     # Generate secret if not provided
     secret = webhook_data.secret or secrets.token_hex(16)
     
-    webhook_record = db.insert(
-        "webhook_endpoints",
-        {
-            "client_id": client_id,  # Legacy field
-            "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
+    # STEP 3: Build webhook record - use clerk_org_id only (organization-first approach)
+    logger.info(f"[WEBHOOKS] [CREATE] [STEP 3] Building webhook_record | clerk_org_id={clerk_org_id}")
+    
+    if not clerk_org_id or not clerk_org_id.strip():
+        logger.error(f"[WEBHOOKS] [CREATE] [ERROR] Invalid clerk_org_id before creating webhook_record | clerk_org_id={clerk_org_id}")
+        raise ValidationError(f"Invalid clerk_org_id: '{clerk_org_id}' - cannot be empty")
+    
+    webhook_record_data = {
+        "clerk_org_id": clerk_org_id.strip(),  # CRITICAL: Organization ID for data partitioning - ensure no whitespace
             "url": webhook_data.url,
             "event_types": webhook_data.event_types,
             "secret": secret,
             "enabled": webhook_data.enabled,
             "retry_config": webhook_data.retry_config or {"max_attempts": 10, "backoff_strategy": "exponential"},
-        },
-    )
+    }
+    
+    # STEP 4: Explicit validation AFTER setting clerk_org_id in webhook_record_data
+    logger.info(f"[WEBHOOKS] [CREATE] [STEP 4] Validating webhook_record_data.clerk_org_id | value={webhook_record_data.get('clerk_org_id')}")
+    
+    if "clerk_org_id" not in webhook_record_data:
+        logger.error(f"[WEBHOOKS] [CREATE] [ERROR] clerk_org_id key missing from webhook_record_data | keys={list(webhook_record_data.keys())}")
+        raise ValidationError("clerk_org_id is missing from webhook_record_data")
+    
+    if not webhook_record_data["clerk_org_id"] or not str(webhook_record_data["clerk_org_id"]).strip():
+        logger.error(f"[WEBHOOKS] [CREATE] [ERROR] clerk_org_id is empty in webhook_record_data | webhook_record_data={webhook_record_data}")
+        raise ValidationError(f"clerk_org_id cannot be empty in webhook_record_data: '{webhook_record_data.get('clerk_org_id')}'")
+    
+    logger.info(f"[WEBHOOKS] [CREATE] [STEP 4] ✅ webhook_record_data.clerk_org_id validated | value={webhook_record_data.get('clerk_org_id')}")
+    
+    # STEP 5: Log complete webhook_record_data before insert
+    logger.info(f"[WEBHOOKS] [CREATE] [STEP 5] Complete webhook_record_data before insert | clerk_org_id={webhook_record_data.get('clerk_org_id')}")
+    
+    # Create webhook endpoint - use clerk_org_id only (organization-first approach)
+    webhook_record = db.insert("webhook_endpoints", webhook_record_data)
+    
+    # STEP 6: Verify clerk_org_id was saved correctly
+    saved_clerk_org_id = webhook_record.get('clerk_org_id') if webhook_record else None
+    logger.info(f"[WEBHOOKS] [CREATE] [STEP 6] Webhook inserted | webhook_id={webhook_record.get('id')} | saved_clerk_org_id={saved_clerk_org_id}")
+    
+    if not saved_clerk_org_id or not str(saved_clerk_org_id).strip():
+        logger.error(f"[WEBHOOKS] [CREATE] [ERROR] clerk_org_id is empty after insert! | webhook_record={webhook_record}")
+        raise ValidationError(f"clerk_org_id was not saved correctly: '{saved_clerk_org_id}'")
+    
+    logger.info(f"[WEBHOOKS] [CREATE] [STEP 6] ✅ Webhook created successfully | webhook_id={webhook_record.get('id')} | clerk_org_id={saved_clerk_org_id}")
     
     return {
         "data": WebhookEndpointResponse(
             id=webhook_record["id"],
-            client_id=webhook_record["client_id"],
             url=webhook_record["url"],
             event_types=webhook_record["event_types"],
             secret=webhook_record["secret"],
@@ -457,8 +498,7 @@ async def create_webhook_endpoint(
 
 @router.get("")
 async def list_webhook_endpoints(
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """List webhook endpoints"""
     # CRITICAL: Use clerk_org_id for organization-first approach
@@ -489,8 +529,7 @@ async def list_webhook_endpoints(
 @router.get("/{webhook_id}")
 async def get_webhook_endpoint(
     webhook_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Get single webhook endpoint"""
     # CRITICAL: Use clerk_org_id for organization-first approach
@@ -523,12 +562,10 @@ async def get_webhook_endpoint(
 async def update_webhook_endpoint(
     webhook_id: str,
     webhook_data: WebhookEndpointUpdate,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Update webhook endpoint"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -577,12 +614,10 @@ async def update_webhook_endpoint(
 @router.delete("/{webhook_id}")
 async def delete_webhook_endpoint(
     webhook_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Delete webhook endpoint"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")

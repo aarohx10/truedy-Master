@@ -268,6 +268,9 @@ export function useAuthClient() {
     }
   }, [user, userLoaded, isSignedIn, getToken, organization])
 
+  // Get orgId (organization-first approach)
+  const orgId = organization?.id || null
+  
   return { 
     user: user ? {
       id: user.id,
@@ -282,7 +285,8 @@ export function useAuthClient() {
     } : null,
     isLoading,
     hasToken: authManager.hasToken(), // Indicates if authManager has a valid token
-    clientId,
+    clientId, // Keep for billing endpoints only
+    orgId, // CRITICAL: Organization ID for main app features (organization-first approach)
     organization,
     refreshToken: () => authManager.refreshToken(),
     getToken: getClerkToken,

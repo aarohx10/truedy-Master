@@ -8,6 +8,7 @@ import uuid
 import logging
 
 from app.core.auth import get_current_user
+from app.core.permissions import require_admin_role
 from app.core.database import DatabaseService
 from app.core.encryption import encrypt_api_key, decrypt_api_key
 from app.core.exceptions import NotFoundError, ForbiddenError, ConflictError, ValidationError
@@ -30,8 +31,7 @@ router = APIRouter()
 
 @router.get("/me")
 async def get_me(
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(get_current_user),  # CRITICAL: Don't require admin - users need to create themselves first!
 ):
     """Get current user information, auto-create user/client/organization if doesn't exist"""
     debug_logger.log_request("GET", "/auth/me", {
@@ -322,13 +322,23 @@ async def get_me(
             "email": email,
             "role": "client_admin",  # First user is admin
             "clerk_user_id": user_id,  # Clerk ONLY
+            "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
             "auth0_sub": "",  # Legacy field - empty string for Clerk-only users (database requires NOT NULL)
         }
         
-        debug_logger.log_db("INSERT", "users", {"user_id": user_id_uuid, "client_id": client_id, "token_type": "clerk"})
+        logger.info(
+            f"[AUTH_ME] [DEBUG] Creating new user | "
+            f"user_id={user_id_uuid} | "
+            f"clerk_user_id={user_id} | "
+            f"clerk_org_id={clerk_org_id} | "
+            f"client_id={client_id} | "
+            f"role=client_admin"
+        )
+        
+        debug_logger.log_db("INSERT", "users", {"user_id": user_id_uuid, "client_id": client_id, "clerk_org_id": clerk_org_id, "token_type": "clerk"})
         admin_db.table("users").insert(user_data_dict).execute()
-        logger.info(f"Created new user: {user_id_uuid}, client: {client_id}")
-        debug_logger.log_step("AUTH_ME", "Created new user", {"user_id": user_id_uuid, "client_id": client_id})
+        logger.info(f"Created new user: {user_id_uuid}, client: {client_id}, org: {clerk_org_id}")
+        debug_logger.log_step("AUTH_ME", "Created new user", {"user_id": user_id_uuid, "client_id": client_id, "clerk_org_id": clerk_org_id})
         
         # Refresh user_data
         user = admin_db.table("users").select("*").eq("clerk_user_id", user_id).execute()
@@ -348,8 +358,18 @@ async def get_me(
         debug_logger.log_error("AUTH_ME", NotFoundError("user"), {"user_id": user_id})
         raise NotFoundError("user")
     
+    # CRITICAL: Get organization's credits balance (organization-first billing)
+    credits_balance = 0
+    if clerk_org_id:
+        org_client = db.get_client_by_org_id(clerk_org_id)
+        if org_client:
+            credits_balance = org_client.get("credits_balance", 0)
+    
+    # Add credits_balance to user response (organization-scoped)
+    user_with_credits = {**user, "credits_balance": credits_balance}
+    
     result = {
-        "data": UserResponse(**user),
+        "data": UserResponse(**user_with_credits),
         "meta": ResponseMeta(
             request_id=str(uuid.uuid4()),
             ts=datetime.utcnow(),
@@ -367,17 +387,23 @@ async def get_me(
 
 @router.get("/clients")
 async def get_clients(
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
-    """Get clients (filtered by role)"""
-    db = DatabaseService(current_user["token"])
+    """Get clients (filtered by role) - organization-first billing"""
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
+    
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
     if current_user["role"] == "agency_admin":
         clients = db.select("clients")
     else:
-        clients = db.select("clients", {"id": current_user["client_id"]})
+        # Get client by organization ID (organization-first billing)
+        org_client = db.get_client_by_org_id(clerk_org_id)
+        clients = [org_client] if org_client else []
     
     return {
         "data": [ClientResponse(**client) for client in clients],
@@ -390,24 +416,37 @@ async def get_clients(
 
 @router.get("/users")
 async def get_users(
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
-    """Get users for the current client (team members)"""
+    """Get users for the current organization (team members) - organization-first billing"""
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
+    
     debug_logger.log_request("GET", "/auth/users", {
         "user_id": current_user.get("user_id"),
-        "client_id": current_user.get("client_id"),
+        "clerk_org_id": clerk_org_id,
     })
     
-    db = DatabaseService(current_user["token"])
+    # Initialize database service with org_id context
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    # Get users for the current client (RLS will filter by client_id automatically)
-    users = db.select("users", {"client_id": current_user["client_id"]})
+    # Get client by organization ID (organization-first billing)
+    org_client = db.get_client_by_org_id(clerk_org_id)
+    if not org_client:
+        raise NotFoundError("client")
+    
+    org_client_id = org_client.get("id")
+    
+    # Get users for the organization's client (organization-scoped)
+    users = db.select("users", {"client_id": org_client_id})
     
     debug_logger.log_response("GET", "/auth/users", 200, context={
         "user_count": len(users),
-        "client_id": current_user.get("client_id"),
+        "clerk_org_id": clerk_org_id,
+        "client_id": org_client_id,
     })
     
     return {
@@ -421,20 +460,29 @@ async def get_users(
 
 @router.get("/api-keys")
 async def list_api_keys(
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
-    """List all API keys for the current client (without decrypted values)"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    """List all API keys for the current organization (without decrypted values) - organization-first billing"""
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
     
-    db = DatabaseService(current_user["token"])
+    # Initialize database service with org_id context
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    # Query api_keys table filtered by client_id
+    # Get client by organization ID (organization-first billing)
+    org_client = db.get_client_by_org_id(clerk_org_id)
+    if not org_client:
+        raise NotFoundError("client")
+    
+    org_client_id = org_client.get("id")
+    
+    # Query api_keys table filtered by organization's client_id (organization-scoped)
     api_keys = db.select(
         "api_keys",
-        {"client_id": current_user["client_id"]},
+        {"client_id": org_client_id},
         order_by="created_at DESC",
     )
     
@@ -442,7 +490,7 @@ async def list_api_keys(
     api_key_responses = [
         ApiKeyResponse(
             id=key["id"],
-            client_id=key["client_id"],
+            client_id=key["client_id"],  # Organization's client_id (for billing table relationship)
             service=key["service"],
             key_name=key["key_name"],
             is_active=key["is_active"],
@@ -463,30 +511,39 @@ async def list_api_keys(
 @router.delete("/api-keys/{api_key_id}")
 async def delete_api_key(
     api_key_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
-    """Delete an API key"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    """Delete an API key - organization-first billing"""
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
     
-    db = DatabaseService(current_user["token"])
+    # Initialize database service with org_id context
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    # Verify the API key exists and belongs to the current user's client_id
+    # Get client by organization ID (organization-first billing)
+    org_client = db.get_client_by_org_id(clerk_org_id)
+    if not org_client:
+        raise NotFoundError("client")
+    
+    org_client_id = org_client.get("id")
+    
+    # Verify the API key exists and belongs to the organization's client
     api_key = db.select_one(
         "api_keys",
         {
             "id": api_key_id,
-            "client_id": current_user["client_id"],
+            "client_id": org_client_id,
         },
     )
     
     if not api_key:
         raise NotFoundError("api_key", api_key_id)
     
-    # Hard delete from database - filter by client_id to enforce org scoping
-    db.delete("api_keys", {"id": api_key_id, "client_id": current_user["client_id"]})
+    # Hard delete from database - filter by organization's client_id (organization-scoped)
+    db.delete("api_keys", {"id": api_key_id, "client_id": org_client_id})
     
     return {
         "data": {
@@ -503,8 +560,7 @@ async def delete_api_key(
 @router.post("/api-keys")
 async def create_api_key(
     api_key_data: ApiKeyCreate,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """
     Create API key (encrypted storage).
@@ -512,8 +568,7 @@ async def create_api_key(
     CRITICAL: API keys are generated per Organization, not per User.
     This ensures team members can share API keys within an organization.
     """
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -524,12 +579,19 @@ async def create_api_key(
     db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
+    # Get client by organization ID (organization-first billing)
+    org_client = db.get_client_by_org_id(clerk_org_id)
+    if not org_client:
+        raise NotFoundError("client")
+    
+    org_client_id = org_client.get("id")
+    
     # Check for duplicate key name within the organization
-    # CRITICAL: Check by org_id, not just client_id
+    # CRITICAL: Check by organization's client_id (organization-scoped)
     existing = db.select_one(
         "api_keys",
         {
-            "client_id": current_user["client_id"],  # Legacy field
+            "client_id": org_client_id,
             "key_name": api_key_data.key_name,
         },
     )
@@ -550,7 +612,7 @@ async def create_api_key(
     api_key_record = db.insert(
         "api_keys",
         {
-            "client_id": current_user["client_id"],  # Legacy field
+            "client_id": org_client_id,  # Organization's client_id (organization-scoped)
             "service": "custom",  # Default service since we don't require it
             "key_name": api_key_data.key_name,
             "encrypted_key": encrypted_key,
@@ -587,21 +649,30 @@ async def create_api_key(
 @router.patch("/providers/tts")
 async def update_tts_provider(
     provider_data: TTSProviderUpdate,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
-    """Configure external TTS provider"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    """Configure external TTS provider - organization-first billing"""
+    # CRITICAL: Use clerk_org_id for organization-first approach
+    clerk_org_id = current_user.get("clerk_org_id")
+    if not clerk_org_id:
+        raise ValidationError("Missing organization ID in token")
     
-    db = DatabaseService(current_user["token"])
+    # Initialize database service with org_id context
+    db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    # Update or create API key
+    # Get client by organization ID (organization-first billing)
+    org_client = db.get_client_by_org_id(clerk_org_id)
+    if not org_client:
+        raise NotFoundError("client")
+    
+    org_client_id = org_client.get("id")
+    
+    # Update or create API key - filter by organization's client_id (organization-scoped)
     existing = db.select_one(
         "api_keys",
         {
-            "client_id": current_user["client_id"],
+            "client_id": org_client_id,
             "service": provider_data.provider,
         },
     )
@@ -625,7 +696,7 @@ async def update_tts_provider(
         api_key_record = db.insert(
             "api_keys",
             {
-                "client_id": current_user["client_id"],
+                "client_id": org_client_id,  # Organization's client_id (organization-scoped)
                 "service": provider_data.provider,
                 "key_name": f"{provider_data.provider.title()} TTS Key",
                 "encrypted_key": encrypted_key,
@@ -676,7 +747,7 @@ async def update_tts_provider(
     return {
         "data": ApiKeyResponse(
             id=api_key_record["id"],
-            client_id=api_key_record["client_id"],
+            client_id=api_key_record["client_id"],  # Organization's client_id (for billing table relationship)
             service=api_key_record["service"],
             key_name=api_key_record["key_name"],
             is_active=api_key_record["is_active"],

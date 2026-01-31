@@ -28,11 +28,11 @@ import { getStripe } from '@/lib/stripe'
 import { PaymentForm } from '@/components/billing/payment-form'
 import { useUser } from '@clerk/nextjs'
 import { apiClient } from '@/lib/api'
-import { useClientId } from '@/lib/clerk-auth-client'
+import { useAuthClient } from '@/lib/clerk-auth-client'
 
 export default function BillingPage() {
   const { user } = useUser()
-  const clientId = useClientId()
+  const { orgId } = useAuthClient()
   const [selectedAmount, setSelectedAmount] = useState<string>('2500')
   const [customAmount, setCustomAmount] = useState('')
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
@@ -110,8 +110,8 @@ export default function BillingPage() {
     const fetchCredits = async () => {
       try {
         const response = await apiClient.get('/auth/me')
-        // Credits balance should be in the client data
-        const credits = response.data?.credits_balance || response.data?.client?.credits_balance || 0
+        // Credits balance is organization-scoped (organization-first billing)
+        const credits = response.data?.credits_balance || 0
         setCreditsBalance(credits)
       } catch (error) {
         const rawError = error instanceof Error ? error : new Error(String(error))
@@ -275,7 +275,7 @@ export default function BillingPage() {
                 <PaymentForm
                   amount={amount}
                   credits={credits}
-                  clientId={clientId || ''}
+                  orgId={orgId || ''}
                   clientSecret={clientSecret}
                   onSuccess={() => {
                     setPaymentDialogOpen(false)

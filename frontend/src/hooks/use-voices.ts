@@ -1,9 +1,11 @@
+'use client'
+
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { apiClient, endpoints } from '@/lib/api'
 import { authManager } from '@/lib/auth-manager'
 import { Voice } from '@/types'
-import { useAuthClient, useClientId, useAuthReady } from '@/lib/clerk-auth-client'
+import { useAuthClient, useAuthReady } from '@/lib/clerk-auth-client'
 import { useOrganization } from '@clerk/nextjs'
 import { useAppStore } from '@/stores/app-store'
 

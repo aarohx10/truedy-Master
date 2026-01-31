@@ -36,7 +36,7 @@ export default function FolderDetailPage() {
   const params = useParams()
   const folderId = params.folderId as string
   const queryClient = useQueryClient()
-  const { clientId } = useAuthClient()
+  const { orgId } = useAuthClient()
 
   // Get folder from folders list (simplified - no separate get endpoint)
   const { data: folders = [], isLoading: foldersLoading } = useContactFolders()
@@ -154,11 +154,11 @@ export default function FolderDetailPage() {
     // Invalidate and refetch contacts to show the newly imported ones
     // Reset to page 1 to see the newly imported contacts
     setCurrentPage(1)
-    if (clientId && folderId) {
-      queryClient.invalidateQueries({ queryKey: ['contacts', clientId, folderId] })
-      queryClient.refetchQueries({ queryKey: ['contacts', clientId, folderId] })
+    if (orgId && folderId) {
+      queryClient.invalidateQueries({ queryKey: ['contacts', orgId, folderId] })
+      queryClient.refetchQueries({ queryKey: ['contacts', orgId, folderId] })
       // Also refresh folder count
-      queryClient.invalidateQueries({ queryKey: ['contact-folders', clientId] })
+      queryClient.invalidateQueries({ queryKey: ['contact-folders', orgId] })
     }
   }
 

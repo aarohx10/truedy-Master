@@ -9,6 +9,7 @@ import uuid
 import json
 
 from app.core.auth import get_current_user
+from app.core.permissions import require_admin_role
 from app.core.exceptions import NotFoundError, ForbiddenError, ValidationError, ProviderError
 from app.core.idempotency import check_idempotency_key, store_idempotency_response
 from app.services.ultravox import ultravox_client
@@ -23,8 +24,7 @@ router = APIRouter()
 
 @router.get("")
 async def list_tools(
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """
     List tools from database for current organization.
@@ -66,8 +66,7 @@ async def list_tools(
 @router.get("/{tool_id}")
 async def get_tool(
     tool_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """
     Get tool from database.
@@ -118,13 +117,11 @@ async def get_tool(
 async def create_tool(
     tool_data: Dict[str, Any],
     request: Request,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
     idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
 ):
     """Create tool in Ultravox - Direct proxy"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -169,10 +166,9 @@ async def create_tool(
                 tool_definition = tool_data.get("definition", {})
                 http_config = tool_definition.get("http", {})
                 
-                # Build database record
+                # Build database record - use clerk_org_id only (organization-first approach)
                 tool_db_record = {
                     "id": str(uuid.uuid4()),
-                    "client_id": current_user.get("client_id"),  # Legacy field
                     "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
                     "ultravox_tool_id": ultravox_tool_id,
                     "name": tool_data.get("name") or ultravox_response.get("name", ""),
@@ -243,12 +239,10 @@ async def create_tool(
 async def update_tool(
     tool_id: str,
     tool_data: Dict[str, Any],
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Update tool in both Ultravox and database"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     try:
         # CRITICAL: Use clerk_org_id for organization-first approach
@@ -333,12 +327,10 @@ async def update_tool(
 @router.delete("/{tool_id}")
 async def delete_tool(
     tool_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Delete tool from both Ultravox and database"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     try:
         # CRITICAL: Use clerk_org_id for organization-first approach
@@ -396,12 +388,10 @@ async def delete_tool(
 async def test_tool(
     tool_id: str,
     test_data: Dict[str, Any],
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Test tool in Ultravox"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     try:
         test_result = await ultravox_client.test_tool(tool_id, test_data)

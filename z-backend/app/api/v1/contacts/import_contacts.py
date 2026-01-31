@@ -11,6 +11,7 @@ import logging
 import json
 
 from app.core.auth import get_current_user
+from app.core.permissions import require_admin_role
 from app.core.database import DatabaseAdminService
 from app.core.exceptions import ValidationError, ForbiddenError, NotFoundError
 from app.core.storage import get_file_path
@@ -30,20 +31,16 @@ router = APIRouter()
 @router.post("/import-contacts", response_model=dict)
 async def import_contacts(
     import_data: ContactImportRequest,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Import contacts from CSV file (base64) or direct array with dynamic field mapping"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     try:
         # CRITICAL: Use clerk_org_id for organization-first approach
         clerk_org_id = current_user.get("clerk_org_id")
         if not clerk_org_id:
             raise ValidationError("Missing organization ID in token")
-        
-        client_id = current_user.get("client_id")  # Legacy field for backward compatibility
         
         # Use DatabaseAdminService for bulk operations and consistency
         db = DatabaseAdminService()
@@ -68,7 +65,7 @@ async def import_contacts(
                 # Parse CSV with mapping config
                 parsed_contacts = parse_csv_contacts(csv_content, import_data.mapping_config)
                 
-                # Add folder_id and client_id to all contacts
+                # Add folder_id to all contacts (clerk_org_id will be added during insert)
                 for contact in parsed_contacts:
                     contact["folder_id"] = import_data.folder_id
                     contacts_to_import.append(contact)
@@ -133,13 +130,12 @@ async def import_contacts(
         # Bulk Upsert: Use DatabaseAdminService bulk_insert for performance
         logger.info(f"[CONTACTS] [IMPORT] Bulk inserting {len(valid_contacts)} contacts")
         
-        # Prepare records for bulk insert
+        # Prepare records for bulk insert - use clerk_org_id only (organization-first approach)
         contact_records = []
         for contact_data in valid_contacts:
             contact_id = str(uuid.uuid4())
             contact_record = {
                 "id": contact_id,
-                "client_id": client_id,  # Legacy field
                 "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
                 "folder_id": contact_data["folder_id"],
                 "first_name": contact_data.get("first_name"),

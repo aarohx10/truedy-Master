@@ -20,7 +20,7 @@ import { CreateCallModal } from '@/components/calls/create-call-modal'
 export default function CallsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const { isLoading: authLoading, clientId } = useAuthClient()
+  const { isLoading: authLoading, orgId } = useAuthClient()
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [selectedCall, setSelectedCall] = useState<Call | null>(null)
@@ -41,14 +41,14 @@ export default function CallsPage() {
       ['queued', 'ringing', 'in_progress'].includes(call.status)
     )
     
-    if (hasActiveCalls) {
+    if (hasActiveCalls && orgId) {
       const interval = setInterval(() => {
-        queryClient.invalidateQueries({ queryKey: ['calls', clientId] })
+        queryClient.invalidateQueries({ queryKey: ['calls', orgId] })
       }, 3000)
       
       return () => clearInterval(interval)
     }
-  }, [calls, queryClient, clientId])
+  }, [calls, queryClient, orgId])
 
   const filteredCalls = calls.filter(call => {
     const matchesSearch = 
@@ -56,7 +56,7 @@ export default function CallsPage() {
     return matchesSearch
   })
 
-  const isLoading = authLoading || (!clientId && !callsLoading) || callsLoading
+  const isLoading = authLoading || (!orgId && !callsLoading) || callsLoading
 
   const getStatusBadge = (status: string) => {
     const statusConfig = CALL_STATUSES.find(s => s.value === status)

@@ -11,14 +11,14 @@ import { ArrowLeft, Upload, Table2, File, X } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient, endpoints } from '@/lib/api'
-import { useClientId } from '@/lib/clerk-auth-client'
+import { useAuthClient } from '@/lib/clerk-auth-client'
 import { formatPhoneNumber } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import * as XLSX from 'xlsx'
 
 export default function NewCampaignPage() {
   const router = useRouter()
-  const clientId = useClientId()
+  const { orgId } = useAuthClient()
   const { toast } = useToast()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [batchName, setBatchName] = useState('Untitled Batch')
@@ -30,13 +30,13 @@ export default function NewCampaignPage() {
   
   // Fetch phone numbers from database
   const { data: phoneNumbersData, isLoading: phoneNumbersLoading } = useQuery({
-    queryKey: ['phone-numbers', clientId],
+    queryKey: ['phone-numbers', orgId],
     queryFn: async () => {
       const response = await apiClient.get<Array<{ id: string; phone_number: string; label?: string }>>(endpoints.telephony.numbers)
       // Backend returns { data: [...], meta: {...}, pagination: {...} }
       return Array.isArray(response.data) ? response.data : []
     },
-    enabled: !!clientId,
+    enabled: !!orgId,
   })
   
   const phoneNumbers = phoneNumbersData || []

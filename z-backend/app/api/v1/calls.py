@@ -13,6 +13,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 from app.core.auth import get_current_user
+from app.core.permissions import require_admin_role
 from app.core.database import DatabaseService
 from app.core.exceptions import NotFoundError, ForbiddenError, ValidationError
 from app.core.idempotency import check_idempotency_key, store_idempotency_response
@@ -38,8 +39,7 @@ router = APIRouter()
 async def create_call(
     call_data: CallCreate,
     request: Request,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
     idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
 ):
     """Create call"""
@@ -66,19 +66,37 @@ async def create_call(
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
+    
+    # STEP 1: Explicit validation BEFORE creating call_record
+    logger.info(f"[CALLS] [CREATE] [STEP 1] Extracting clerk_org_id from current_user | clerk_org_id={clerk_org_id}")
+    
     if not clerk_org_id:
+        logger.error(f"[CALLS] [CREATE] [ERROR] Missing clerk_org_id in current_user | current_user_keys={list(current_user.keys())}")
         raise ValidationError("Missing organization ID in token")
+    
+    # Strip whitespace and validate it's not empty
+    clerk_org_id = str(clerk_org_id).strip()
+    if not clerk_org_id:
+        logger.error(f"[CALLS] [CREATE] [ERROR] clerk_org_id is empty after stripping | original_value={current_user.get('clerk_org_id')}")
+        raise ValidationError("Organization ID cannot be empty")
+    
+    logger.info(f"[CALLS] [CREATE] [STEP 2] ✅ clerk_org_id validated | clerk_org_id={clerk_org_id}")
     
     # Initialize database service with org_id context
     db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    # Create call record
+    # STEP 3: Build call record - use clerk_org_id only (organization-first approach)
+    logger.info(f"[CALLS] [CREATE] [STEP 3] Building call_record | clerk_org_id={clerk_org_id}")
+    
+    if not clerk_org_id or not clerk_org_id.strip():
+        logger.error(f"[CALLS] [CREATE] [ERROR] Invalid clerk_org_id before creating call_record | clerk_org_id={clerk_org_id}")
+        raise ValidationError(f"Invalid clerk_org_id: '{clerk_org_id}' - cannot be empty")
+    
     call_id = str(uuid.uuid4())
     call_record = {
         "id": call_id,
-        "client_id": current_user.get("client_id"),  # Legacy field
-        "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
+        "clerk_org_id": clerk_org_id.strip(),  # CRITICAL: Organization ID for data partitioning - ensure no whitespace
         "created_by_user_id": current_user.get("clerk_user_id"),  # Track which user created the call
         "agent_id": call_data.agent_id if call_data.agent_id else None,
         "phone_number": call_data.phone_number,
@@ -88,7 +106,33 @@ async def create_call(
         "call_settings": call_data.call_settings.dict() if call_data.call_settings else {},
     }
     
-    db.insert("calls", call_record)
+    # STEP 4: Explicit validation AFTER setting clerk_org_id in call_record
+    logger.info(f"[CALLS] [CREATE] [STEP 4] Validating call_record.clerk_org_id | value={call_record.get('clerk_org_id')}")
+    
+    if "clerk_org_id" not in call_record:
+        logger.error(f"[CALLS] [CREATE] [ERROR] clerk_org_id key missing from call_record | keys={list(call_record.keys())}")
+        raise ValidationError("clerk_org_id is missing from call_record")
+    
+    if not call_record["clerk_org_id"] or not str(call_record["clerk_org_id"]).strip():
+        logger.error(f"[CALLS] [CREATE] [ERROR] clerk_org_id is empty in call_record | call_record={call_record}")
+        raise ValidationError(f"clerk_org_id cannot be empty in call_record: '{call_record.get('clerk_org_id')}'")
+    
+    logger.info(f"[CALLS] [CREATE] [STEP 4] ✅ call_record.clerk_org_id validated | value={call_record.get('clerk_org_id')}")
+    
+    # STEP 5: Log complete call_record before insert
+    logger.info(f"[CALLS] [CREATE] [STEP 5] Complete call_record before insert | call_id={call_id} | clerk_org_id={call_record.get('clerk_org_id')}")
+    
+    created_call = db.insert("calls", call_record)
+    
+    # STEP 6: Verify clerk_org_id was saved correctly
+    saved_clerk_org_id = created_call.get('clerk_org_id') if created_call else None
+    logger.info(f"[CALLS] [CREATE] [STEP 6] Call inserted | call_id={call_id} | saved_clerk_org_id={saved_clerk_org_id}")
+    
+    if not saved_clerk_org_id or not str(saved_clerk_org_id).strip():
+        logger.error(f"[CALLS] [CREATE] [ERROR] clerk_org_id is empty after insert! | call_id={call_id} | created_call={created_call}")
+        raise ValidationError(f"clerk_org_id was not saved correctly: '{saved_clerk_org_id}'")
+    
+    logger.info(f"[CALLS] [CREATE] [STEP 6] ✅ Call created successfully | call_id={call_id} | clerk_org_id={saved_clerk_org_id}")
     
     # Get agent's outbound number if this is an outbound call
     caller_id = None
@@ -163,7 +207,6 @@ async def create_call(
     if call_record.get("ultravox_call_id"):
         await emit_call_created(
             call_id=call_id,
-            client_id=current_user.get("client_id"),  # Legacy
             org_id=clerk_org_id,  # Organization ID
             ultravox_call_id=call_record["ultravox_call_id"],
             phone_number=call_data.phone_number,
@@ -199,8 +242,7 @@ async def create_call(
 
 @router.get("")
 async def list_calls(
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
     agent_id: Optional[str] = None,
     status: Optional[str] = None,
     direction: Optional[str] = None,
@@ -256,8 +298,7 @@ async def list_calls(
 @router.get("/{call_id}")
 async def get_call(
     call_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
     refresh: bool = False,
 ):
     """Get call with optional status refresh from Ultravox"""
@@ -323,8 +364,7 @@ async def get_call(
 @router.get("/{call_id}/transcript")
 async def get_call_transcript(
     call_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Get call transcript"""
     # CRITICAL: Use clerk_org_id for organization-first approach
@@ -384,8 +424,7 @@ async def get_call_transcript(
 @router.get("/{call_id}/recording")
 async def get_call_recording(
     call_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Get call recording URL"""
     # CRITICAL: Use clerk_org_id for organization-first approach
@@ -501,8 +540,7 @@ async def get_call_recording(
 async def update_call(
     call_id: str,
     call_data: CallUpdate,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Update call (context and settings only)"""
     # CRITICAL: Use clerk_org_id for organization-first approach
@@ -556,12 +594,10 @@ async def update_call(
 @router.post("/bulk")
 async def bulk_delete_calls(
     request_data: BulkDeleteRequest,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Bulk delete calls"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -624,12 +660,10 @@ async def bulk_delete_calls(
 @router.delete("/{call_id}")
 async def delete_call(
     call_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Delete call"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")

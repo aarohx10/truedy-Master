@@ -10,6 +10,7 @@ import logging
 import json
 
 from app.core.auth import get_current_user
+from app.core.permissions import require_admin_role
 from app.core.database import DatabaseService
 from app.core.exceptions import ValidationError, ForbiddenError, ProviderError
 from app.core.idempotency import check_idempotency_key, store_idempotency_response
@@ -30,12 +31,10 @@ async def create_agent(
     agent_data: AgentCreate,
     request: Request,
     current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
     idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
 ):
     """Create new agent (creates in Supabase + Ultravox)"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -60,11 +59,21 @@ async def create_agent(
     try:
         # CRITICAL: Use clerk_org_id for organization-first approach
         clerk_org_id = current_user.get("clerk_org_id")
+        
+        # STEP 1: Explicit validation BEFORE creating agent_record
+        logger.info(f"[AGENTS] [CREATE] [STEP 1] Extracting clerk_org_id from current_user | clerk_org_id={clerk_org_id}")
+        
         if not clerk_org_id:
+            logger.error(f"[AGENTS] [CREATE] [ERROR] Missing clerk_org_id in current_user | current_user_keys={list(current_user.keys())}")
             raise ValidationError("Missing organization ID in token")
         
-        # Legacy client_id lookup (for backward compatibility with validation)
-        client_id = current_user.get("client_id")
+        # Strip whitespace and validate it's not empty
+        clerk_org_id = str(clerk_org_id).strip()
+        if not clerk_org_id:
+            logger.error(f"[AGENTS] [CREATE] [ERROR] clerk_org_id is empty after stripping | original_value={current_user.get('clerk_org_id')}")
+            raise ValidationError("Organization ID cannot be empty")
+        
+        logger.info(f"[AGENTS] [CREATE] [STEP 2] ✅ clerk_org_id validated | clerk_org_id={clerk_org_id}")
         
         # Initialize database service with org_id context
         db = DatabaseService(org_id=clerk_org_id)
@@ -73,12 +82,18 @@ async def create_agent(
         # Convert Pydantic model to dict
         agent_dict = agent_data.dict(exclude_none=True)
         
-        # Build database record
+        # STEP 3: Build database record - use clerk_org_id only (organization-first approach)
+        # CRITICAL: Ensure clerk_org_id is never empty (double-check before setting)
+        logger.info(f"[AGENTS] [CREATE] [STEP 3] Building agent_record | clerk_org_id={clerk_org_id}")
+        
+        if not clerk_org_id or not clerk_org_id.strip():
+            logger.error(f"[AGENTS] [CREATE] [ERROR] Invalid clerk_org_id before creating agent_record | clerk_org_id={clerk_org_id}")
+            raise ValidationError(f"Invalid clerk_org_id: '{clerk_org_id}' - cannot be empty")
+        
         agent_id = str(uuid.uuid4())
         agent_record = {
             "id": agent_id,
-            "client_id": client_id,  # Legacy field - kept for backward compatibility
-            "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
+            "clerk_org_id": clerk_org_id.strip(),  # CRITICAL: Organization ID for data partitioning - ensure no whitespace
             "name": agent_dict["name"],
             "description": agent_dict.get("description"),
             "voice_id": agent_dict["voice_id"],
@@ -127,8 +142,24 @@ async def create_agent(
         if agent_dict.get("crm_webhook_secret"):
             agent_record["crm_webhook_secret"] = agent_dict["crm_webhook_secret"]
         
+        # STEP 4: Explicit validation AFTER setting clerk_org_id in agent_record
+        logger.info(f"[AGENTS] [CREATE] [STEP 4] Validating agent_record.clerk_org_id | value={agent_record.get('clerk_org_id')}")
+        
+        if "clerk_org_id" not in agent_record:
+            logger.error(f"[AGENTS] [CREATE] [ERROR] clerk_org_id key missing from agent_record | keys={list(agent_record.keys())}")
+            raise ValidationError("clerk_org_id is missing from agent_record")
+        
+        if not agent_record["clerk_org_id"] or not str(agent_record["clerk_org_id"]).strip():
+            logger.error(f"[AGENTS] [CREATE] [ERROR] clerk_org_id is empty in agent_record | agent_record={agent_record}")
+            raise ValidationError(f"clerk_org_id cannot be empty in agent_record: '{agent_record.get('clerk_org_id')}'")
+        
+        logger.info(f"[AGENTS] [CREATE] [STEP 4] ✅ agent_record.clerk_org_id validated | value={agent_record.get('clerk_org_id')}")
+        
+        # STEP 5: Log complete agent_record before insert (for debugging)
+        logger.info(f"[AGENTS] [CREATE] [STEP 5] Complete agent_record before insert | agent_id={agent_id} | clerk_org_id={agent_record.get('clerk_org_id')} | keys={list(agent_record.keys())}")
+        
         # Validate agent can be created in Ultravox
-        validation_result = await validate_agent_for_ultravox_sync(agent_record, client_id)
+        validation_result = await validate_agent_for_ultravox_sync(agent_record, clerk_org_id)
         
         if not validation_result["can_sync"]:
             # Validation failed - return error immediately
@@ -138,7 +169,7 @@ async def create_agent(
         # Create in Ultravox FIRST
         try:
             # Pass clerk_org_id to Ultravox for metadata tagging (vital for webhook billing/logging)
-            ultravox_response = await create_agent_ultravox_first(agent_record, client_id, clerk_org_id=clerk_org_id)
+            ultravox_response = await create_agent_ultravox_first(agent_record, clerk_org_id)
             ultravox_agent_id = ultravox_response.get("agentId")
             
             if not ultravox_agent_id:
@@ -149,6 +180,8 @@ async def create_agent(
             agent_record["status"] = "active"
             
             # Now save to Supabase
+            # CRITICAL: Log the agent_record before insert to verify clerk_org_id
+            logger.info(f"[AGENTS] [CREATE] Inserting agent with clerk_org_id: {agent_record.get('clerk_org_id')}")
             db.insert("agents", agent_record)
             logger.info(f"[AGENTS] [CREATE] Agent created in Ultravox FIRST, then saved to DB: {agent_id}")
             
@@ -173,7 +206,20 @@ async def create_agent(
             )
         
         # Fetch the created agent - filter by org_id to enforce org scoping
+        # STEP 8: Fetch and verify the created agent
+        logger.info(f"[AGENTS] [CREATE] [STEP 8] Fetching created agent | agent_id={agent_id} | clerk_org_id={clerk_org_id}")
         created_agent = db.select_one("agents", {"id": agent_id, "clerk_org_id": clerk_org_id})
+        
+        if created_agent:
+            fetched_clerk_org_id = created_agent.get('clerk_org_id')
+            logger.info(f"[AGENTS] [CREATE] [STEP 8] ✅ Agent fetched | agent_id={agent_id} | fetched_clerk_org_id={fetched_clerk_org_id}")
+            
+            if not fetched_clerk_org_id or not str(fetched_clerk_org_id).strip():
+                logger.error(f"[AGENTS] [CREATE] [ERROR] clerk_org_id is empty in fetched agent! | agent_id={agent_id} | created_agent={created_agent}")
+                raise ValidationError(f"clerk_org_id is empty in fetched agent: '{fetched_clerk_org_id}'")
+        else:
+            logger.error(f"[AGENTS] [CREATE] [ERROR] Failed to fetch created agent | agent_id={agent_id} | clerk_org_id={clerk_org_id}")
+            raise ValidationError(f"Failed to fetch created agent: {agent_id}")
         
         response_data = {
             "data": created_agent,

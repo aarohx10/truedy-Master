@@ -10,6 +10,7 @@ import logging
 import json
 
 from app.core.auth import get_current_user
+from app.core.permissions import require_admin_role
 from app.core.database import DatabaseService
 from app.core.exceptions import NotFoundError, ValidationError, ForbiddenError, ProviderError
 from app.models.schemas import (
@@ -27,24 +28,20 @@ router = APIRouter()
 async def update_agent(
     agent_id: str,
     agent_data: AgentUpdate,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """
     Update agent (updates both Supabase + Ultravox).
     
     CRITICAL: Filters by clerk_org_id to ensure organization-scoped access.
     """
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     try:
         # CRITICAL: Use clerk_org_id for organization-first approach
         clerk_org_id = current_user.get("clerk_org_id")
         if not clerk_org_id:
             raise ValidationError("Missing organization ID in token")
-        
-        client_id = current_user.get("client_id")  # Legacy field
         
         # Initialize database service with org_id context
         db = DatabaseService(org_id=clerk_org_id)
@@ -116,7 +113,7 @@ async def update_agent(
         merged_agent = {**existing_agent, **update_data}
         
         # Validate agent can be updated in Ultravox
-        validation_result = await validate_agent_for_ultravox_sync(merged_agent, client_id)
+        validation_result = await validate_agent_for_ultravox_sync(merged_agent, clerk_org_id)
         
         if not validation_result["can_sync"]:
             # Validation failed - return error immediately
@@ -129,11 +126,11 @@ async def update_agent(
         try:
             if ultravox_agent_id:
                 # Update existing agent in Ultravox FIRST
-                ultravox_response = await update_agent_ultravox_first(ultravox_agent_id, merged_agent, client_id)
+                ultravox_response = await update_agent_ultravox_first(ultravox_agent_id, merged_agent, clerk_org_id)
                 logger.info(f"[AGENTS] [UPDATE] Agent updated in Ultravox FIRST: {ultravox_agent_id}")
             else:
                 # No ultravox_agent_id - create in Ultravox FIRST
-                ultravox_response = await create_agent_ultravox_first(merged_agent, client_id)
+                ultravox_response = await create_agent_ultravox_first(merged_agent, clerk_org_id)
                 ultravox_agent_id = ultravox_response.get("agentId")
                 if not ultravox_agent_id:
                     raise ValueError("Ultravox did not return agentId")

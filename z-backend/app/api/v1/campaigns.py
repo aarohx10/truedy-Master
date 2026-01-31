@@ -14,6 +14,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 from app.core.auth import get_current_user
+from app.core.permissions import require_admin_role
+from app.core.permissions import require_admin_role
 from app.core.database import DatabaseService
 from app.core.storage import generate_presigned_url
 import os
@@ -39,8 +41,7 @@ router = APIRouter()
 async def create_campaign(
     campaign_data: CampaignCreate,
     request: Request,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
     idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
 ):
     """
@@ -48,15 +49,25 @@ async def create_campaign(
     
     CRITICAL: Campaigns are scoped to organizations, not individual users.
     """
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
+    
+    # STEP 1: Explicit validation BEFORE creating campaign_record
+    logger.info(f"[CAMPAIGNS] [CREATE] [STEP 1] Extracting clerk_org_id from current_user | clerk_org_id={clerk_org_id}")
+    
     if not clerk_org_id:
+        logger.error(f"[CAMPAIGNS] [CREATE] [ERROR] Missing clerk_org_id in current_user | current_user_keys={list(current_user.keys())}")
         raise ValidationError("Missing organization ID in token")
     
-    client_id = current_user.get("client_id")  # Legacy field
+    # Strip whitespace and validate it's not empty
+    clerk_org_id = str(clerk_org_id).strip()
+    if not clerk_org_id:
+        logger.error(f"[CAMPAIGNS] [CREATE] [ERROR] clerk_org_id is empty after stripping | original_value={current_user.get('clerk_org_id')}")
+        raise ValidationError("Organization ID cannot be empty")
+    
+    logger.info(f"[CAMPAIGNS] [CREATE] [STEP 2] ✅ clerk_org_id validated | clerk_org_id={clerk_org_id}")
     
     # Check idempotency key
     body_dict = campaign_data.dict() if hasattr(campaign_data, 'dict') else json.loads(json.dumps(campaign_data, default=str))
@@ -78,11 +89,10 @@ async def create_campaign(
     db = DatabaseService(token=current_user["token"], org_id=clerk_org_id)
     db.set_auth(current_user["token"])
     
-    # Create campaign record
+    # Create campaign record - use clerk_org_id only (organization-first approach)
     campaign_id = str(uuid.uuid4())
     campaign_record = {
         "id": campaign_id,
-        "client_id": client_id,  # Legacy field
         "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
         "agent_id": campaign_data.agent_id if campaign_data.agent_id else None,
         "name": campaign_data.name,
@@ -94,13 +104,38 @@ async def create_campaign(
         "stats": {"pending": 0, "calling": 0, "completed": 0, "failed": 0},
     }
     
-    db.insert("campaigns", campaign_record)
+    # STEP 4: Explicit validation AFTER setting clerk_org_id in campaign_record
+    logger.info(f"[CAMPAIGNS] [CREATE] [STEP 4] Validating campaign_record.clerk_org_id | value={campaign_record.get('clerk_org_id')}")
+    
+    if "clerk_org_id" not in campaign_record:
+        logger.error(f"[CAMPAIGNS] [CREATE] [ERROR] clerk_org_id key missing from campaign_record | keys={list(campaign_record.keys())}")
+        raise ValidationError("clerk_org_id is missing from campaign_record")
+    
+    if not campaign_record["clerk_org_id"] or not str(campaign_record["clerk_org_id"]).strip():
+        logger.error(f"[CAMPAIGNS] [CREATE] [ERROR] clerk_org_id is empty in campaign_record | campaign_record={campaign_record}")
+        raise ValidationError(f"clerk_org_id cannot be empty in campaign_record: '{campaign_record.get('clerk_org_id')}'")
+    
+    logger.info(f"[CAMPAIGNS] [CREATE] [STEP 4] ✅ campaign_record.clerk_org_id validated | value={campaign_record.get('clerk_org_id')}")
+    
+    # STEP 5: Log complete campaign_record before insert
+    logger.info(f"[CAMPAIGNS] [CREATE] [STEP 5] Complete campaign_record before insert | campaign_id={campaign_id} | clerk_org_id={campaign_record.get('clerk_org_id')}")
+    
+    created_campaign = db.insert("campaigns", campaign_record)
+    
+    # STEP 6: Verify clerk_org_id was saved correctly
+    saved_clerk_org_id = created_campaign.get('clerk_org_id') if created_campaign else None
+    logger.info(f"[CAMPAIGNS] [CREATE] [STEP 6] Campaign inserted | campaign_id={campaign_id} | saved_clerk_org_id={saved_clerk_org_id}")
+    
+    if not saved_clerk_org_id or not str(saved_clerk_org_id).strip():
+        logger.error(f"[CAMPAIGNS] [CREATE] [ERROR] clerk_org_id is empty after insert! | campaign_id={campaign_id} | created_campaign={created_campaign}")
+        raise ValidationError(f"clerk_org_id was not saved correctly: '{saved_clerk_org_id}'")
+    
+    logger.info(f"[CAMPAIGNS] [CREATE] [STEP 6] ✅ Campaign created successfully | campaign_id={campaign_id} | clerk_org_id={saved_clerk_org_id}")
     
     # Emit event
     await emit_campaign_created(
         campaign_id=campaign_id,
-        client_id=client_id,  # Legacy
-        org_id=clerk_org_id,  # CRITICAL: Include org_id
+        org_id=clerk_org_id,  # CRITICAL: Organization ID (organization-first approach)
         name=campaign_data.name,
     )
     
@@ -129,12 +164,10 @@ async def create_campaign(
 @router.post("/{campaign_id}/contacts/presign")
 async def presign_contacts_csv(
     campaign_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Get presigned URL for contacts CSV upload"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -179,12 +212,10 @@ async def presign_contacts_csv(
 async def upload_campaign_contacts(
     campaign_id: str,
     contacts_data: CampaignContactsUpload,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Upload campaign contacts (CSV or direct array)"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -282,16 +313,14 @@ async def upload_campaign_contacts(
 @router.post("/{campaign_id}/schedule")
 async def schedule_campaign(
     campaign_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """
     Schedule campaign with atomic pre-flight checks.
     Validates credits and ultravox_agent_id before calling Ultravox.
     Rolls back to draft status if Ultravox returns an error.
     """
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -459,7 +488,6 @@ async def schedule_campaign(
 @router.get("")
 async def list_campaigns(
     current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
     agent_id: Optional[str] = None,
     status: Optional[str] = None,
     limit: int = 50,
@@ -603,7 +631,6 @@ async def list_campaigns(
 async def get_campaign(
     campaign_id: str,
     current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
 ):
     """
     Get campaign with live reconciliation from Ultravox.
@@ -732,12 +759,10 @@ async def get_campaign(
 async def update_campaign(
     campaign_id: str,
     campaign_data: CampaignUpdate,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Update campaign"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -797,12 +822,10 @@ async def update_campaign(
 @router.post("/{campaign_id}/pause")
 async def pause_campaign(
     campaign_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Pause a running campaign"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -854,12 +877,10 @@ async def pause_campaign(
 @router.post("/{campaign_id}/resume")
 async def resume_campaign(
     campaign_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Resume a paused campaign"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -933,12 +954,10 @@ async def resume_campaign(
 @router.post("/bulk")
 async def bulk_delete_campaigns(
     request_data: BulkDeleteRequest,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Bulk delete campaigns"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")
@@ -1006,12 +1025,10 @@ async def bulk_delete_campaigns(
 @router.delete("/{campaign_id}")
 async def delete_campaign(
     campaign_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Delete campaign"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     # CRITICAL: Use clerk_org_id for organization-first approach
     clerk_org_id = current_user.get("clerk_org_id")

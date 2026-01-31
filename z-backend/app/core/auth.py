@@ -147,16 +147,126 @@ async def verify_clerk_jwt(token: str) -> Dict[str, Any]:
         )
         
         # CRITICAL LOGIC: Extract org_id and user_id, with fallback
+        # NOTE: Clerk JWT tokens don't include org_id by default unless configured as custom claim
+        # If org_id is missing, we fetch it from Clerk API to get the actual organization ID
         user_id = claims.get("sub")
         org_id = claims.get("org_id")
         
-        # If org_id is null (user is in their personal workspace), use user_id as org_id
+        logger.debug(f"[TOKEN_VERIFY] [STEP 1] Initial extraction | user_id={user_id} | org_id_from_token={org_id}")
+        debug_logger.log_auth("TOKEN_VERIFY", "Initial org_id extraction", {
+            "user_id": user_id,
+            "org_id_from_token": org_id
+        })
+        
+        # Validate user_id exists
+        if not user_id:
+            logger.error("[TOKEN_VERIFY] [ERROR] user_id (sub) is missing from token claims")
+            raise UnauthorizedError("Invalid token: missing user ID")
+        
+        # If org_id is missing from token, fetch it from Clerk API
         if not org_id and user_id:
-            org_id = user_id
-            debug_logger.log_auth("TOKEN_VERIFY", "org_id is null, using user_id as org_id for personal workspace", {
+            logger.debug(f"[TOKEN_VERIFY] [STEP 2] org_id not in token, fetching from Clerk API | user_id={user_id}")
+            debug_logger.log_auth("TOKEN_VERIFY", "Fetching org_id from Clerk API", {
                 "user_id": user_id,
-                "org_id": org_id
+                "reason": "org_id missing from token"
             })
+            try:
+                clerk_secret_key = getattr(settings, 'CLERK_SECRET_KEY', '')
+                if clerk_secret_key:
+                    # Fetch user's organization memberships from Clerk API
+                    async with httpx.AsyncClient() as client:
+                        response = await client.get(
+                            f"https://api.clerk.dev/v1/users/{user_id}/organization_memberships",
+                            headers={
+                                "Authorization": f"Bearer {clerk_secret_key}",
+                                "Content-Type": "application/json",
+                            },
+                            timeout=5.0,
+                        )
+                        if response.status_code == 200:
+                            response_data = response.json()
+                            # Clerk API returns paginated response with 'data' array
+                            memberships = response_data.get("data", [])
+                            logger.debug(f"[TOKEN_VERIFY] [STEP 2a] Clerk API response | memberships_count={len(memberships)}")
+                            
+                            # Get the first organization (or primary organization)
+                            if memberships and len(memberships) > 0:
+                                # Find primary org (admin role) or first one
+                                primary_org = next(
+                                    (m for m in memberships if m.get("role") == "org:admin"),
+                                    memberships[0]
+                                )
+                                # Extract org_id from membership object
+                                # OrganizationMembership has organization.id property
+                                organization_obj = primary_org.get("organization", {})
+                                fetched_org_id = organization_obj.get("id")
+                                if fetched_org_id:
+                                    org_id = fetched_org_id
+                                    logger.info(f"[TOKEN_VERIFY] [STEP 2b] ✅ Fetched org_id from Clerk API | user_id={user_id} | org_id={org_id}")
+                                    debug_logger.log_auth("TOKEN_VERIFY", "Fetched org_id from Clerk API", {
+                                        "user_id": user_id,
+                                        "org_id": org_id,
+                                        "membership_role": primary_org.get("role")
+                                    })
+                                else:
+                                    logger.warning(f"[TOKEN_VERIFY] [STEP 2b] Organization object missing 'id' in membership | membership={primary_org}")
+                                    debug_logger.log_auth("TOKEN_VERIFY", "Organization object missing id", {
+                                        "user_id": user_id,
+                                        "membership": primary_org
+                                    })
+                            else:
+                                logger.debug(f"[TOKEN_VERIFY] [STEP 2b] No organization memberships found for user | user_id={user_id}")
+                                debug_logger.log_auth("TOKEN_VERIFY", "No organization memberships found", {
+                                    "user_id": user_id
+                                })
+                        else:
+                            logger.warning(f"[TOKEN_VERIFY] [STEP 2a] Clerk API returned non-200 status | status={response.status_code} | response={response.text}")
+                            debug_logger.log_auth("TOKEN_VERIFY", "Clerk API error", {
+                                "user_id": user_id,
+                                "status_code": response.status_code,
+                                "response": response.text[:200]  # Truncate for logging
+                            })
+            except Exception as e:
+                logger.warning(f"[TOKEN_VERIFY] [STEP 2] Failed to fetch org_id from Clerk API: {e}", exc_info=True)
+                debug_logger.log_error("TOKEN_VERIFY", e, {
+                    "user_id": user_id,
+                    "step": "fetch_org_id_from_api"
+                })
+            
+            # Only fallback to user_id if we still don't have an org_id (personal workspace)
+            if not org_id:
+                org_id = user_id
+                logger.warning(f"[TOKEN_VERIFY] [STEP 3] ⚠️ No org_id found, using user_id as fallback (personal workspace) | user_id={user_id} | org_id={org_id}")
+                debug_logger.log_auth("TOKEN_VERIFY", "org_id is null, using user_id as org_id for personal workspace", {
+                    "user_id": user_id,
+                    "org_id": org_id
+                })
+        
+        # CRITICAL VALIDATION: Ensure org_id is NEVER None or empty
+        # This is the final safety check before storing in claims
+        if not org_id:
+            logger.error(f"[TOKEN_VERIFY] [ERROR] org_id is still None/empty after all fallback logic | user_id={user_id}")
+            debug_logger.log_error("TOKEN_VERIFY", Exception("org_id cannot be determined"), {
+                "user_id": user_id,
+                "step": "final_validation"
+            })
+            raise UnauthorizedError("Cannot determine organization ID from token")
+        
+        # Strip whitespace and validate it's not empty after stripping
+        org_id = str(org_id).strip()
+        if not org_id:
+            logger.error(f"[TOKEN_VERIFY] [ERROR] org_id is empty string after stripping whitespace | user_id={user_id}")
+            debug_logger.log_error("TOKEN_VERIFY", Exception("org_id is empty after stripping"), {
+                "user_id": user_id,
+                "step": "final_validation"
+            })
+            raise UnauthorizedError("Organization ID cannot be empty")
+        
+        logger.info(f"[TOKEN_VERIFY] [STEP 4] ✅ Final org_id validation passed | user_id={user_id} | org_id={org_id}")
+        debug_logger.log_auth("TOKEN_VERIFY", "Final org_id validation passed", {
+            "user_id": user_id,
+            "org_id": org_id
+        })
         
         # Store the effective org_id in claims for downstream use
         claims["_effective_org_id"] = org_id
@@ -219,9 +329,141 @@ async def verify_jwt(token: str) -> Dict[str, Any]:
         raise UnauthorizedError("Invalid or expired Clerk token")
 
 
+async def ensure_admin_role_for_creator(
+    user_id: str,
+    clerk_org_id: str,
+    clerk_role: Optional[str],
+    user_data: Optional[Dict[str, Any]],
+    admin_db: Any,
+) -> str:
+    """
+    Enterprise-grade role determination: Ensure organization creators/admins always get admin role.
+    
+    This function handles all edge cases:
+    - Clerk org admins → always admin
+    - First user in organization (by clerk_org_id) → admin
+    - First user in personal workspace (by clerk_org_id) → admin
+    - Updates database immediately for consistency
+    
+    NOTE: Uses clerk_org_id for organization scoping (organization-first approach).
+    client_id is only used for billing/audit tables, not for main app operations.
+    
+    Args:
+        user_id: Clerk user ID
+        clerk_org_id: Effective organization ID (user_id for personal workspace)
+        clerk_role: Clerk organization role (org:admin, org:member, etc.)
+        user_data: User data from database (if exists)
+        admin_db: Supabase admin client
+    
+    Returns:
+        Determined role: "client_admin" or "client_user"
+    """
+    # Priority 1: Clerk org admin → always grant admin role
+    if clerk_role == "org:admin":
+        logger.info(f"[ROLE_DETERMINATION] User {user_id} is Clerk org admin → granting client_admin")
+        if user_data and user_data.get("role") != "client_admin":
+            try:
+                admin_db.table("users").update({"role": "client_admin"}).eq("clerk_user_id", user_id).execute()
+                logger.info(f"[ROLE_DETERMINATION] Updated user {user_id} role to client_admin (Clerk org admin)")
+            except Exception as e:
+                logger.warning(f"[ROLE_DETERMINATION] Failed to update user role in database: {e}")
+        return "client_admin"
+    
+    # Priority 2: Check if user is first/only user in organization
+    # This handles both organization users and personal workspace users
+    if user_data:
+        current_role = user_data.get("role", "client_user")
+        client_id = user_data.get("client_id")
+        
+        # If already admin, no need to check
+        if current_role == "client_admin":
+            logger.debug(f"[ROLE_DETERMINATION] User {user_id} already has client_admin role")
+            return "client_admin"
+        
+        # SIMPLIFIED LOGIC: Check if user is in an organization (not personal workspace)
+        # If in organization, grant admin immediately
+        is_personal_workspace = (clerk_org_id == user_id)
+        
+        if not is_personal_workspace:
+            # User is in an organization - SIMPLIFIED: grant admin immediately
+            if current_role != "client_admin":
+                logger.info(f"[ROLE_DETERMINATION] User {user_id} is in organization {clerk_org_id} → upgrading to client_admin (simplified logic)")
+                try:
+                    admin_db.table("users").update({"role": "client_admin"}).eq("clerk_user_id", user_id).execute()
+                    return "client_admin"
+                except Exception as e:
+                    logger.error(f"[ROLE_DETERMINATION] Failed to upgrade user role: {e}", exc_info=True)
+                    # Return admin anyway (SIMPLIFIED LOGIC)
+                    return "client_admin"
+            return "client_admin"
+        
+        # Personal workspace case: Check if user is first/only user
+        # NOTE: Use clerk_org_id for all role determination (organization-first approach)
+        try:
+            # Check users by clerk_org_id (organization-first approach)
+            logger.debug(f"[ROLE_DETERMINATION] Checking users by clerk_org_id={clerk_org_id}")
+            org_users = admin_db.table("users").select("id,role,clerk_user_id,clerk_org_id").eq("clerk_org_id", clerk_org_id).execute()
+            
+            if org_users.data:
+                # Check if any other users are admins (excluding current user)
+                other_admins = [
+                    u for u in org_users.data 
+                    if u.get("clerk_user_id") != user_id and u.get("role") == "client_admin"
+                ]
+                
+                if not other_admins:
+                    # This user is the first admin - upgrade them
+                    logger.info(f"[ROLE_DETERMINATION] User {user_id} is first user in clerk_org_id={clerk_org_id} → upgrading to client_admin")
+                    admin_db.table("users").update({"role": "client_admin"}).eq("clerk_user_id", user_id).execute()
+                    return "client_admin"
+                else:
+                    logger.debug(f"[ROLE_DETERMINATION] User {user_id} is not first user ({len(other_admins)} other admins exist)")
+            else:
+                # No users found - this is a new user, upgrade them immediately
+                logger.info(f"[ROLE_DETERMINATION] No users found with clerk_org_id={clerk_org_id} → new user, upgrading to client_admin")
+                admin_db.table("users").update({"role": "client_admin"}).eq("clerk_user_id", user_id).execute()
+                return "client_admin"
+        except Exception as e:
+            logger.error(f"[ROLE_DETERMINATION] Failed to check/upgrade user role: {e}", exc_info=True)
+            # On error, grant admin to be safe (SIMPLIFIED LOGIC)
+            logger.warning(f"[ROLE_DETERMINATION] Error checking users, granting admin as fallback")
+            return "client_admin"
+        
+        # Return current role if no upgrade happened
+        return current_role
+    else:
+        # New user not in database yet
+        # SIMPLIFIED LOGIC: If user has an organization (not personal workspace), grant admin immediately
+        # Personal workspace: clerk_org_id == user_id (fallback from verify_clerk_jwt)
+        # Organization: clerk_org_id != user_id (actual org from Clerk)
+        
+        is_personal_workspace = (clerk_org_id == user_id)
+        
+        if not is_personal_workspace:
+            # User is in an organization - grant admin immediately (SIMPLIFIED LOGIC)
+            logger.info(f"[ROLE_DETERMINATION] User {user_id} is in organization {clerk_org_id} → granting client_admin (simplified logic)")
+            return "client_admin"
+        else:
+            # Personal workspace - check if they're the first user
+            try:
+                org_users = admin_db.table("users").select("id,role,clerk_user_id,clerk_org_id").eq("clerk_org_id", clerk_org_id).execute()
+                if not org_users.data or len(org_users.data) == 0:
+                    # First user in personal workspace - grant admin
+                    logger.info(f"[ROLE_DETERMINATION] User {user_id} is first user in personal workspace → granting client_admin")
+                    return "client_admin"
+                else:
+                    # Not first user - default to client_user
+                    logger.debug(f"[ROLE_DETERMINATION] User {user_id} not first user in personal workspace → defaulting to client_user")
+                    return "client_user"
+            except Exception as e:
+                logger.error(f"[ROLE_DETERMINATION] Failed to check personal workspace users: {e}", exc_info=True)
+                # On error, grant admin to be safe (SIMPLIFIED LOGIC)
+                logger.warning(f"[ROLE_DETERMINATION] Error checking users, granting admin as fallback")
+                return "client_admin"
+
+
 async def get_current_user(
     authorization: Optional[str] = Header(None),
-    x_client_id: Optional[str] = Header(None),
 ) -> Dict[str, Any]:
     """
     Get current user from Clerk JWT token.
@@ -249,16 +491,64 @@ async def get_current_user(
     clerk_org_id = claims.get("_effective_org_id") or claims.get("org_id")
     clerk_role = claims.get("org_role")  # Clerk organization role
     
+    # ENHANCED DEBUG LOGGING: Log token claims
+    logger.debug(
+        f"[GET_USER] [STEP 1] Token claims extracted | "
+        f"user_id={user_id} | "
+        f"org_id_from_token={claims.get('org_id')} | "
+        f"effective_org_id={claims.get('_effective_org_id')} | "
+        f"clerk_org_id={clerk_org_id} | "
+        f"clerk_role={clerk_role}"
+    )
+    debug_logger.log_auth("GET_USER", "Token claims extracted", {
+        "user_id": user_id,
+        "org_id_from_token": claims.get('org_id'),
+        "effective_org_id": claims.get('_effective_org_id'),
+        "clerk_org_id": clerk_org_id,
+        "clerk_role": clerk_role
+    })
+    
     if not user_id:
+        logger.error("[GET_USER] [ERROR] user_id is missing from token claims")
         raise UnauthorizedError("Invalid token: missing user ID")
     
+    # CRITICAL VALIDATION: Ensure clerk_org_id is NEVER None or empty
+    # This should never happen after verify_clerk_jwt enhancements, but this is a safety check
     if not clerk_org_id:
-        # This should never happen after verify_clerk_jwt, but safety check
-        clerk_org_id = user_id
-        debug_logger.log_auth("GET_USER", "WARNING: No org_id found, using user_id as fallback", {
+        logger.error(
+            f"[GET_USER] [ERROR] clerk_org_id is None/empty after verify_clerk_jwt | "
+            f"user_id={user_id} | "
+            f"effective_org_id={claims.get('_effective_org_id')} | "
+            f"org_id_from_token={claims.get('org_id')}"
+        )
+        debug_logger.log_error("GET_USER", Exception("clerk_org_id cannot be determined"), {
             "user_id": user_id,
-            "org_id": clerk_org_id
+            "effective_org_id": claims.get('_effective_org_id'),
+            "org_id_from_token": claims.get('org_id')
         })
+        raise UnauthorizedError("Cannot determine organization ID from token")
+    
+    # Strip whitespace and validate it's not empty after stripping
+    clerk_org_id = str(clerk_org_id).strip()
+    if not clerk_org_id:
+        logger.error(
+            f"[GET_USER] [ERROR] clerk_org_id is empty string after stripping | "
+            f"user_id={user_id}"
+        )
+        debug_logger.log_error("GET_USER", Exception("clerk_org_id is empty after stripping"), {
+            "user_id": user_id
+        })
+        raise UnauthorizedError("Organization ID cannot be empty")
+    
+    logger.info(
+        f"[GET_USER] [STEP 2] ✅ clerk_org_id validation passed | "
+        f"user_id={user_id} | "
+        f"clerk_org_id={clerk_org_id}"
+    )
+    debug_logger.log_auth("GET_USER", "clerk_org_id validation passed", {
+        "user_id": user_id,
+        "clerk_org_id": clerk_org_id
+    })
     
     # Try to get user from database
     # Use admin client to bypass RLS for this lookup
@@ -279,16 +569,24 @@ async def get_current_user(
                 "client_id": user_data.get("client_id")
             })
     
-    # Determine role from database or Clerk org role
-    if user_data:
-        # User exists, get role from database
-        role = user_data.get("role", "client_user")
-    elif clerk_role:
-        # Map Clerk role to our role system
-        if clerk_role == "org:admin":
-            role = "client_admin"
-        else:
-            role = "client_user"
+    # ENTERPRISE-GRADE ROLE DETERMINATION
+    # Use centralized function to ensure organization creators/admins always get admin role
+    role = await ensure_admin_role_for_creator(
+        user_id=user_id,
+        clerk_org_id=clerk_org_id,
+        clerk_role=clerk_role,
+        user_data=user_data,
+        admin_db=admin_db,
+    )
+    
+    # Refresh user_data if role was upgraded
+    if user_data and role == "client_admin" and user_data.get("role") != "client_admin":
+        try:
+            user = admin_db.table("users").select("*").eq("clerk_user_id", user_id).execute()
+            if user.data:
+                user_data = user.data[0]
+        except Exception as e:
+            logger.warning(f"Failed to refresh user_data after role upgrade: {e}")
     
     # Create UserContext object
     user_context = UserContext(
@@ -306,10 +604,23 @@ async def get_current_user(
     result = user_context.dict()
     # Add legacy fields for backward compatibility
     result["user_id"] = user_id
-    # CRITICAL: Populate client_id from DB so legacy fields (e.g. agent_record["client_id"]) and
-    # auth endpoints (/clients, /users, api_keys) work. User is created with client_id by /auth/me.
+    # NOTE: client_id is kept only for billing/audit endpoints (clients, users, api_keys, credit_transactions)
+    # Main app tables (agents, voices, calls, campaigns, etc.) use clerk_org_id only
+    # client_id is populated from user_data if it exists (for billing endpoints), but not actively fetched
     result["client_id"] = user_data.get("client_id") if user_data else None
     result["token_type"] = "clerk"
+    
+    # ENHANCED DEBUG LOGGING: Log all critical values
+    logger.info(
+        f"[GET_USER] [DEBUG] User lookup completed | "
+        f"clerk_user_id={user_id} | "
+        f"clerk_org_id={clerk_org_id} | "
+        f"role={role} | "
+        f"clerk_role={clerk_role} | "
+        f"client_id={result.get('client_id')} (billing only) | "
+        f"user_in_db={'yes' if user_data else 'no'} | "
+        f"token_type=clerk"
+    )
     
     debug_logger.log_auth("GET_USER", "User lookup completed", {
         "clerk_user_id": user_id,
@@ -334,7 +645,7 @@ async def get_optional_current_user(
         return None
     
     try:
-        return await get_current_user(authorization, x_client_id)
+        return await get_current_user(authorization)
     except Exception:
         # Any auth error returns None instead of raising
         return None

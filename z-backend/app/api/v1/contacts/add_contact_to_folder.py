@@ -11,6 +11,7 @@ import logging
 import json
 
 from app.core.auth import get_current_user
+from app.core.permissions import require_admin_role
 from app.core.database import DatabaseService
 from app.core.exceptions import ValidationError, ForbiddenError, NotFoundError
 from app.models.schemas import (
@@ -28,24 +29,20 @@ router = APIRouter()
 @router.post("/add-contact", response_model=dict)
 async def add_contact_to_folder(
     contact_data: ContactCreate,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """
     Add contact to folder - Simple: Verify folder, validate contact, insert with folder_id.
     
     CRITICAL: Contacts are shared across the organization.
     """
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     try:
         # CRITICAL: Use clerk_org_id for organization-first approach
         clerk_org_id = current_user.get("clerk_org_id")
         if not clerk_org_id:
             raise ValidationError("Missing organization ID in token")
-        
-        client_id = current_user.get("client_id")  # Legacy field
         
         # Initialize database service with org_id context
         db = DatabaseService(org_id=clerk_org_id)
@@ -64,7 +61,6 @@ async def add_contact_to_folder(
         contact_id = str(uuid.uuid4())
         contact_record = {
             "id": contact_id,
-            "client_id": client_id,  # Legacy field
             "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
             "folder_id": validated_contact["folder_id"],
             "first_name": validated_contact.get("first_name"),
@@ -88,7 +84,6 @@ async def add_contact_to_folder(
         # Build response (include new standard fields)
         response_data = ContactResponse(
             id=contact_id,
-            client_id=client_id,
             folder_id=validated_contact["folder_id"],
             first_name=validated_contact.get("first_name"),
             last_name=validated_contact.get("last_name"),

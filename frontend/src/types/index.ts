@@ -34,7 +34,6 @@ export interface WorkspaceSettings {
 // Voice Types (matching backend schema)
 export interface Voice {
   id: string;
-  client_id: string;
   name: string;
   provider: string; // 'elevenlabs', 'google', 'azure', 'openai'
   type: 'custom' | 'reference';
@@ -97,7 +96,6 @@ export interface ToolConfig {
 // Campaign Types (matching backend schema)
 export interface Campaign {
   id: string;
-  client_id: string;
   agent_id?: string;
   name: string;
   schedule_type: 'immediate' | 'scheduled';
@@ -149,7 +147,6 @@ export interface CampaignStats {
 // Call Types (matching backend schema)
 export interface Call {
   id: string;
-  client_id: string;
   agent_id?: string;
   ultravox_call_id?: string;
   phone_number: string;
@@ -324,7 +321,6 @@ export interface ContactFolder {
 
 export interface Contact {
   id: string;
-  client_id: string;
   folder_id: string;
   first_name?: string;
   last_name?: string;
@@ -458,7 +454,6 @@ export type NotificationType = 'info' | 'success' | 'warning' | 'error';
 // Agent Types (matching backend schema)
 export interface Agent {
   id: string;
-  client_id: string;
   ultravox_agent_id?: string;
   name: string;
   description?: string;

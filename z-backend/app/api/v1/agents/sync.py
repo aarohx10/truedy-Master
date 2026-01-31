@@ -10,6 +10,7 @@ import logging
 import json
 
 from app.core.auth import get_current_user
+from app.core.permissions import require_admin_role
 from app.core.database import DatabaseService
 from app.core.exceptions import ValidationError, ForbiddenError, ProviderError
 from app.models.schemas import ResponseMeta
@@ -23,12 +24,10 @@ router = APIRouter()
 @router.get("/{agent_id}/sync")
 async def sync_agent(
     agent_id: str,
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """Sync agent with Ultravox (create or update)"""
-    if current_user["role"] not in ["client_admin", "agency_admin"]:
-        raise ForbiddenError("Insufficient permissions")
+    # Permission check handled by require_admin_role dependency
     
     try:
         # CRITICAL: Use clerk_org_id for organization-first approach
@@ -36,10 +35,8 @@ async def sync_agent(
         if not clerk_org_id:
             raise ValidationError("Missing organization ID in token")
         
-        client_id = current_user.get("client_id")  # Legacy field
-        
         # Sync agent
-        ultravox_response = await sync_agent_to_ultravox(agent_id, client_id)
+        ultravox_response = await sync_agent_to_ultravox(agent_id, clerk_org_id)
         
         # Update database with Ultravox agent ID if it was created
         # Initialize database service with org_id context

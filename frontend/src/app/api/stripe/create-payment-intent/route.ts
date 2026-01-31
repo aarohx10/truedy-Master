@@ -18,9 +18,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get client_id from request body (will be set by frontend from useAuthClient)
-    const clientId = null // Client ID should come from request body or be fetched from API
-
     // Check Stripe secret key
     if (!process.env.STRIPE_SECRET_KEY) {
       return NextResponse.json(
@@ -31,14 +28,14 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json()
-    const { amount, currency = 'usd', client_id: bodyClientId } = body
+    const { amount, currency = 'usd', org_id: bodyOrgId } = body
 
-    // Use client_id from request body first, then fall back to session
-    const finalClientId = bodyClientId || clientId
+    // Use org_id from request body (organization-first approach)
+    const finalOrgId = bodyOrgId || orgId
 
-    if (!finalClientId) {
+    if (!finalOrgId) {
       return NextResponse.json(
-        { error: 'Client ID not found in session or request' },
+        { error: 'Organization ID not found in session or request' },
         { status: 400 }
       )
     }
@@ -50,14 +47,13 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create payment intent with Stripe
+    // Create payment intent with Stripe - CRITICAL: Use org_id for organization-first billing
     const paymentIntent = await stripe.paymentIntents.create({
       amount,
       currency,
       metadata: {
-        client_id: finalClientId,
+        org_id: finalOrgId,  // CRITICAL: Organization ID (primary)
         user_id: userId || '',
-        org_id: orgId || '',
       },
       automatic_payment_methods: {
         enabled: true,

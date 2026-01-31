@@ -1,14 +1,15 @@
+'use client'
+
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { apiClient, endpoints } from '@/lib/api'
 import { authManager } from '@/lib/auth-manager'
-import { useClientId, useAuthReady } from '@/lib/clerk-auth-client'
+import { useAuthReady } from '@/lib/clerk-auth-client'
 import { useOrganization } from '@clerk/nextjs'
 import { useAppStore } from '@/stores/app-store'
 
 export interface Call {
   id: string
-  client_id: string
   agent_id?: string
   phone_number: string
   direction: 'inbound' | 'outbound'

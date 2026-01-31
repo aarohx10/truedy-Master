@@ -1,3 +1,5 @@
+'use client'
+
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { apiClient, endpoints } from '@/lib/api'
@@ -8,7 +10,6 @@ import { useAppStore } from '@/stores/app-store'
 
 export interface ApiKey {
   id: string
-  client_id: string
   service: string
   key_name: string
   is_active: boolean

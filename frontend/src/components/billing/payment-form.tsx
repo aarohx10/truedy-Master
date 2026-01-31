@@ -12,7 +12,7 @@ import { Loader2 } from 'lucide-react'
 interface PaymentFormProps {
   amount: number
   credits: number
-  clientId: string
+  orgId: string
   clientSecret: string
   onSuccess: () => void
   onCancel: () => void
@@ -21,7 +21,7 @@ interface PaymentFormProps {
 export function PaymentForm({
   amount,
   credits,
-  clientId,
+  orgId,
   clientSecret,
   onSuccess,
   onCancel,

@@ -15,6 +15,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from app.core.auth import get_current_user
+from app.core.permissions import require_admin_role
 from app.core.database import DatabaseService
 from app.core.exceptions import NotFoundError, ValidationError, ForbiddenError
 from app.models.schemas import ResponseMeta
@@ -67,8 +68,7 @@ class KnowledgeBaseCreateRequest(BaseModel):
 @router.post("")
 async def create_knowledge_base(
     request_data: KnowledgeBaseCreateRequest = Body(...),
-    current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
+    current_user: dict = Depends(require_admin_role),
 ):
     """
     Create new knowledge base with document upload (base64 encoded).
@@ -87,15 +87,27 @@ async def create_knowledge_base(
     Validates file, extracts text, stores in database, and creates Ultravox tool.
     """
     try:
-        # CRITICAL: Use clerk_org_id for organization-first approach
+        # =================================================================
+        # DEBUG LOGGING: Track organization ID and user context
+        # =================================================================
+        clerk_user_id = current_user.get("clerk_user_id") or current_user.get("user_id")
         clerk_org_id = current_user.get("clerk_org_id")
+        user_role = current_user.get("role", "unknown")
+        
+        logger.info(
+            f"[KB_CREATE] [DEBUG] Knowledge base creation attempt | "
+            f"clerk_user_id={clerk_user_id} | "
+            f"clerk_org_id={clerk_org_id} | "
+            f"role={user_role}"
+        )
+        
+        # CRITICAL: Use clerk_org_id for organization-first approach
         if not clerk_org_id:
+            logger.error(f"[KB_CREATE] [ERROR] Missing organization ID in token | clerk_user_id={clerk_user_id}")
             raise ValidationError("Missing organization ID in token")
         
-        client_id = current_user.get("client_id")  # Legacy field
-        
-        if current_user["role"] not in ["client_admin", "agency_admin"]:
-            raise ForbiddenError("Insufficient permissions")
+        # Permission check is handled by require_admin_role dependency
+        # Role assignment is handled in get_current_user() via ensure_admin_role_for_creator()
         
         # Validate input
         name = request_data.name.strip()
@@ -145,9 +157,10 @@ async def create_knowledge_base(
         
         # Initialize database service with org_id context
         db = DatabaseService(org_id=clerk_org_id)
+        
+        # Create KB record - use clerk_org_id only (organization-first approach)
         kb_record = {
             "id": kb_id,
-            "client_id": client_id,  # Legacy field
             "clerk_org_id": clerk_org_id,  # CRITICAL: Organization ID for data partitioning
             "name": name,
             "description": request_data.description,
@@ -160,7 +173,27 @@ async def create_knowledge_base(
             "updated_at": now.isoformat(),
         }
         
+        logger.info(
+            f"[KB_CREATE] [DEBUG] KB record prepared | "
+            f"kb_id={kb_id} | "
+            f"clerk_org_id={clerk_org_id}"
+        )
+        
+        logger.info(
+            f"[KB_CREATE] [DEBUG] Creating knowledge base record | "
+            f"kb_id={kb_id} | "
+            f"clerk_user_id={clerk_user_id} | "
+            f"clerk_org_id={clerk_org_id} | "
+            f"name={name}"
+        )
+        
         db.insert("knowledge_bases", kb_record)
+        
+        logger.info(
+            f"[KB_CREATE] [DEBUG] Knowledge base record created successfully | "
+            f"kb_id={kb_id} | "
+            f"clerk_org_id={clerk_org_id}"
+        )
         
         # Save file temporarily for text extraction
         temp_file_path = None
@@ -169,12 +202,13 @@ async def create_knowledge_base(
                 temp_file.write(file_content)
                 temp_file_path = temp_file.name
             
-            # Extract text and store content (pass org_id)
+            # Extract text and store content - CRITICAL: Pass clerk_org_id (not client_id)
+            # clerk_org_id is TEXT (e.g., "org_..."), client_id is UUID
             extracted_text = await extract_and_store_content(
                 file_path=temp_file_path,
                 file_type=file_type,
                 kb_id=kb_id,
-                client_id=clerk_org_id,  # Pass org_id as client_id for backward compatibility
+                clerk_org_id=clerk_org_id,  # Use clerk_org_id for organization-first approach
                 file_name=request_data.file.filename,
                 file_size=file_size
             )
@@ -182,7 +216,7 @@ async def create_knowledge_base(
             # Create Ultravox tool (non-blocking - don't fail if this fails)
             ultravox_tool_id = None
             try:
-                ultravox_tool_id = await create_ultravox_tool_for_kb(kb_id, name, client_id)
+                ultravox_tool_id = await create_ultravox_tool_for_kb(kb_id, name, clerk_org_id)
             except Exception as tool_error:
                 logger.warning(f"[KB] Failed to create Ultravox tool (non-critical): {tool_error}", exc_info=True)
             
@@ -224,7 +258,6 @@ async def create_knowledge_base(
 @router.get("")
 async def list_knowledge_bases(
     current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
 ):
     """
     List all knowledge bases for current organization.
@@ -266,7 +299,6 @@ async def list_knowledge_bases(
 async def get_knowledge_base(
     kb_id: str,
     current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
 ):
     """Get single knowledge base with content"""
     try:
@@ -310,7 +342,6 @@ async def update_knowledge_base(
     kb_id: str,
     request_data: Dict[str, Any] = Body(...),
     current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
 ):
     """Update knowledge base (name, description, or content)"""
     try:
@@ -371,7 +402,6 @@ async def update_knowledge_base(
 async def delete_knowledge_base(
     kb_id: str,
     current_user: dict = Depends(get_current_user),
-    x_client_id: Optional[str] = Header(None),
 ):
     """Delete knowledge base and associated Ultravox tool"""
     try:

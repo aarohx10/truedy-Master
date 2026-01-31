@@ -60,7 +60,7 @@ import { VoiceListItemSkeleton } from '@/components/ui/list-skeleton'
 
 export default function VoiceCloningPage() {
   const { toast } = useToast()
-  const { isLoading: authLoading, clientId } = useAuthClient() // Initialize auth
+  const { isLoading: authLoading, orgId } = useAuthClient() // Initialize auth
   const { data: exploreVoices, isLoading: exploreLoading, error: exploreError, isFetching: exploreFetching, isFetched: exploreFetched } = useExploreVoices()
   const { data: myVoices, isLoading: myVoicesLoading, error: myVoicesError, isFetching: myVoicesFetching, isFetched: myVoicesFetched } = useMyVoices()
   const deleteVoiceMutation = useDeleteVoice()
@@ -554,8 +554,8 @@ export default function VoiceCloningPage() {
                     {exploreError instanceof Error ? exploreError.message : 'Failed to load voices'}
                   </p>
                   <p className="text-xs text-red-500 dark:text-red-500 mt-1">
-                    {!clientId && 'Client ID not available. Please ensure you are signed in.'}
-                    {clientId && 'Check backend connection and authentication.'}
+                    {!orgId && 'Organization ID not available. Please ensure you are signed in.'}
+                    {orgId && 'Check backend connection and authentication.'}
                   </p>
                 </div>
               </div>
@@ -672,8 +672,8 @@ export default function VoiceCloningPage() {
                      'Failed to load voices'}
                   </p>
                   <p className="text-xs text-red-500 dark:text-red-500 mt-1">
-                    {!clientId && 'Client ID not available. Please ensure you are signed in.'}
-                    {clientId && 'Check backend connection and authentication.'}
+                    {!orgId && 'Organization ID not available. Please ensure you are signed in.'}
+                    {orgId && 'Check backend connection and authentication.'}
                   </p>
                 </div>
               </div>
@@ -685,7 +685,7 @@ export default function VoiceCloningPage() {
                   <VoiceListItemSkeleton key={`skeleton-${i}`} />
                 ))}
               </>
-            ) : !clientId ? (
+            ) : !orgId ? (
               <div className="flex flex-col items-center justify-center py-20">
                 <AlertCircle className="h-12 w-12 text-yellow-500 mb-4" />
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
